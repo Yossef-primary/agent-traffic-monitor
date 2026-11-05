@@ -1,65 +1,68 @@
 #!/usr/bin/env python3
-"""dashboard.py: serve the live traffic dashboard for proxy.py.
+"""dashboard.py: serve dashboard.html and stream the proxy's JSONL log to it.
 
-    python3 dashboard.py                              # http://localhost:8050
-    python3 dashboard.py --port 8050 --log traffic.jsonl
+    python3 dashboard.py [--port 8050] [--log traffic.jsonl]   # open http://localhost:8050
 
-GET /         the page (dashboard.html, next to this file)
-GET /events   Server-Sent Events: every line already in the log, then each new
-              line as the proxy writes it. Lines are sent unchanged; the page
-              does all the parsing. Standard library only.
+Standard library only. The server does not parse traffic: it sends each JSONL
+line unchanged as one Server-Sent Event (id = line number). All parsing happens
+in the page, so live data and reloaded history go through the same code.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-LOG = Path("traffic.jsonl")
-POLL = 0.2          # seconds between checks of the log
-PING = 15.0         # seconds of silence before a keep-alive comment
-READ = 4 << 20      # read the log in pieces of this many bytes
-RESET = b"event: reset\ndata: {}\n\n"
-
-
-def count_lines(path: Path) -> int:
-    try:
-        with path.open("rb") as f:
-            return sum(piece.count(b"\n") for piece in iter(lambda: f.read(READ), b""))
-    except OSError:
-        return 0
+HERE = os.path.dirname(os.path.abspath(__file__))
+LOG_PATH = "traffic.jsonl"
+POLL = 0.2
+PING_EVERY = 15.0
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         pass
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path in ("/", "/index.html"):
-            self.page()
+            self.serve_page()
         elif path == "/events":
-            self.events()
+            try:
+                self.serve_events()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError, OSError):
+                pass  # browser went away
         else:
             self.send_error(404)
 
-    def page(self) -> None:
+    def serve_page(self) -> None:
         try:
-            data = (HERE / "dashboard.html").read_bytes()
+            with open(os.path.join(HERE, "dashboard.html"), "rb") as f:
+                data = f.read()
         except OSError as e:
             self.send_error(500, f"cannot read dashboard.html: {e}")
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
-    def events(self) -> None:
+    def send_event(self, data: bytes, event_id: int | None = None, event: str | None = None) -> None:
+        parts = []
+        if event:
+            parts.append(b"event: " + event.encode() + b"\n")
+        if event_id is not None:
+            parts.append(b"id: " + str(event_id).encode() + b"\n")
+        parts.append(b"data: " + data + b"\n\n")
+        self.wfile.write(b"".join(parts))
+
+    def serve_events(self) -> None:
         try:
             resume = int(self.headers.get("Last-Event-ID") or 0)
         except ValueError:
@@ -67,73 +70,72 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
         self.end_headers()
-        try:
-            self.stream(resume)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass  # the browser went away
-
-    def stream(self, resume: int) -> None:
-        """Send log lines after line `resume`, then follow the file forever."""
+        self.close_connection = True
         self.wfile.write(b"retry: 1000\n\n")
-        # A resume point past the end means the file was replaced while we were away.
-        if resume and count_lines(LOG) < resume:
-            self.wfile.write(RESET)
-            resume = 0
-        offset = line_no = 0
-        inode = None
-        partial = b""
-        last_sent = time.monotonic()
+        self.wfile.flush()
+
+        if resume:
+            # The browser remembers more lines than the file has (it was replaced
+            # while we were down): tell the page to clear and send everything.
+            try:
+                with open(LOG_PATH, "rb") as f:
+                    have = sum(1 for _ in f)
+            except OSError:
+                have = 0
+            if resume > have:
+                resume = 0
+                self.send_event(b"{}", event="reset")
+                self.wfile.flush()
+
+        line_no = 0      # lines already handled (sent or skipped)
+        offset = 0       # byte offset of the first unread byte
+        partial = b""    # held-back partial last line
+        last_ping = time.monotonic()
         while True:
             try:
-                st = LOG.stat()
-                size, ino = st.st_size, st.st_ino
+                size = os.path.getsize(LOG_PATH)
             except OSError:
-                size, ino = 0, None
-            if size < offset or (inode is not None and ino != inode):
-                # Truncated, deleted or replaced: tell the page and start from line 1.
-                offset = line_no = resume = 0
-                partial = b""
-                self.wfile.write(RESET)
-            inode = ino
-            sent = False
+                size = 0
+            if size < offset:
+                # Deleted or truncated: start again from line 1.
+                offset, line_no, partial, resume = 0, 0, b"", 0
+                self.send_event(b"{}", event="reset")
+                self.wfile.flush()
             if size > offset:
-                with LOG.open("rb") as f:
+                with open(LOG_PATH, "rb") as f:
                     f.seek(offset)
-                    while offset < size:
-                        data = f.read(min(READ, size - offset))
-                        if not data:
-                            break
-                        offset += len(data)
-                        *lines, partial = (partial + data).split(b"\n")  # hold back a half-written line
-                        out = []
-                        for line in lines:
-                            line_no += 1
-                            line = line.rstrip(b"\r")
-                            if line_no > resume and line.strip():
-                                out.append(b"id: %d\ndata: %s\n\n" % (line_no, line))
-                        if out:
-                            self.wfile.write(b"".join(out))
-                            sent = True
+                    data = f.read(size - offset)
+                offset += len(data)
+                buf = partial + data
+                lines = buf.split(b"\n")
+                partial = lines.pop()  # incomplete tail (b"" if buf ended with \n)
+                for raw in lines:
+                    line_no += 1
+                    raw = raw.rstrip(b"\r")
+                    if line_no <= resume or not raw.strip():
+                        continue
+                    self.send_event(raw, event_id=line_no)
+                self.wfile.flush()
             now = time.monotonic()
-            if sent:
-                last_sent = now
-            elif now - last_sent >= PING:
+            if now - last_ping >= PING_EVERY:
                 self.wfile.write(b": ping\n\n")
-                last_sent = now
+                self.wfile.flush()
+                last_ping = now
             time.sleep(POLL)
 
 
 def main() -> None:
-    global LOG
-    parser = argparse.ArgumentParser(description="Serve a live dashboard of proxy.py's traffic log.")
+    global LOG_PATH
+    parser = argparse.ArgumentParser(description="Live dashboard for proxy.py traffic.")
     parser.add_argument("--port", type=int, default=8050)
-    parser.add_argument("--log", default=str(LOG), help="JSONL file written by proxy.py (default: traffic.jsonl)")
+    parser.add_argument("--log", default=LOG_PATH, help="JSONL file written by proxy.py --log")
     args = parser.parse_args()
-    LOG = Path(args.log)
+    LOG_PATH = args.log
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"dashboard on http://localhost:{args.port}  <-  {LOG}")
+    server.daemon_threads = True
+    print(f"dashboard on http://localhost:{args.port}  (log: {LOG_PATH})", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
