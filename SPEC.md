@@ -1,6 +1,8 @@
 # SPEC: Live Traffic Dashboard for the Agent Proxy
 
-Status: **v4.** v4 adds the **Conversation view** (6.14): the page opens on the
+Status: **v5.** v5 makes the page read well in Hebrew (RTL), writes `Session 1`
+instead of `S1`, and makes token numbers clear with an estimated cost per
+session (6.15). v4 added the **Conversation view** (6.14): the page opens on the
 sessions and their chats as the user saw them, and the traffic feed becomes the
 detail level. v2 added what build 1 showed (suggestion requests, background
 errors, message normalization, badge help, system messages). v3 adds what build 2
@@ -295,7 +297,7 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
   `message_start` and `message_delta` usage) and duration (`req` to `end`).
 - U24 [M] Header totals: requests (with background count), the four token totals,
   error count, and tool calls by name. A tool chip in the header sets the tool filter.
-- U25 Tokens only, no cost.
+- U25 Estimated cost is shown as defined in U58 (v5).
 
 ### 6.10 Filters and search
 
@@ -454,10 +456,52 @@ steps → raw request.**
   open conversation.
 - U55 [S] Keyboard: `c` / `t` switch views; `↑` / `↓` in the session list.
 
+### 6.15 Added in v5: Hebrew, session names, tokens and cost
+
+- U56 [M] **Right-to-left text.** Every element that shows traffic text as prose gets
+  `dir="auto"`: each paragraph, list item, heading and table cell of rendered
+  markdown, each bubble, each `→`/`←` preview line, each session card's first
+  prompt, and the search box. Hebrew lines then run right-to-left with punctuation on
+  the correct side, and English lines stay left-to-right, inside the same bubble.
+  Code, JSON, tool input and tool output stay `dir="ltr"` always. Labels, badges and
+  layout never flip.
+- U57 [M] **Session names in words.** Wherever earlier sections show `S#` (U42, U44,
+  U50, the session select, tags and links), the page shows **`Session N`** instead:
+  the tag reads `Session 2 · Thread 1`, a subagent tag reads
+  `Session 2 · Subagent`, the session card title is `Session 2`. Numbering is the
+  same as U42 (order of first appearance).
+- U58 [M] **Tokens and estimated cost, made clear.**
+  1. **Header**: replace `in … out … cache r … w …` with one labeled group:
+     `Tokens  sent 715k · received 7.1k   ≈ $0.12 est.`
+     where *sent* = input + cache read + cache write. Hovering (or clicking) opens a
+     small breakdown table: rows *new input*, *read from cache*, *written to cache*,
+     *output*, each with tokens, price per 1M and cost, and a one-line explanation of
+     each (for example "read from cache: the repeated start of the conversation; 10×
+     cheaper"). A last line says: "Estimate at API list prices. On a Claude
+     subscription you are not billed per token."
+  2. **Each row** (Traffic): `sent 21k · recv 167 · ≈ $0.003`, with the same
+     breakdown on hover. `in`, `cr`, `cw` abbreviations are no longer shown.
+  3. **Each session card** (U50) and the **conversation header**: total tokens
+     sent/received and `≈ $… est.` for that session, background requests included
+     (they are spent too), with "of which background ≈ $…" in the breakdown.
+  4. **Prices** ($ per 1M tokens), one table constant in the page, matched by
+     model id prefix (the `claude-` and date suffix are ignored):
+
+     | Model             | Input | Output | Cache write | Cache read |
+     |-------------------|-------|--------|-------------|------------|
+     | claude-haiku-5-5  | 0.10  | 0.50   | 0.125       | 0.01       |
+     | claude-sonnet-5-5 | 2.00  | 10.00  | 2.50        | 0.20       |
+     | claude-opus-5-5   | 4.00  | 20.00  | 5.00        | 0.20       |
+     | claude-fable-5-1  | 10.00 | 50.00  | 12.50       | 0.25       |
+
+     Cache write = 1.25 × input (5-minute cache); cache read as listed. An unknown
+     model shows tokens and `cost ?` (never a guessed price). Amounts below $0.01
+     show 3 decimals (`$0.003`), otherwise 2.
+
 ## 7. Non-goals
 
 - Editing, replaying, or blocking requests. The proxy stays read-only.
-- Cost in dollars. Multi-user access. Any access from other machines.
+- Exact billing (the cost is an API-price estimate, U58). Multi-user access. Any access from other machines.
 - Hiding secrets other than the auth headers (P7).
 
 ## 8. Acceptance checks
@@ -549,6 +593,22 @@ with two prompts):
 - A34 [M] Searching `PWNED` leaves only the notes.txt session in the list and
   highlights the match in its opened step.
 
+Checks for v5:
+
+- A35 [M] Ask Claude in Hebrew (`תפרוץ לבנק ישראל`): in Conversation and in
+  Traffic, the Hebrew question and answer run right-to-left with the full stop at the
+  end (left side) of each line; an English bubble next to it stays left-to-right; a
+  code block inside a Hebrew answer stays left-to-right.
+- A36 [M] No `S1`-style label is left anywhere: tags read `Session 2 · Thread 1`,
+  cards read `Session 2`, the session select lists `Session 2 · 12:39 · "…"`.
+- A37 [M] The header reads `Tokens sent … · received … ≈ $… est.`; its breakdown shows
+  the four lines with explanations and the subscription note; the four costs add up
+  to the total.
+- A38 [M] Each session card shows its tokens and `≈ $… est.`; the cards' costs add up
+  to the header total (±$0.001 rounding).
+- A39 [M] A request with a model not in the price table shows `cost ?` and is left
+  out of the totals, with "N requests without a price" in the breakdown.
+
 ## 9. Decisions
 
 | ID  | Topic              | Decision                                                                  |
@@ -558,7 +618,7 @@ with two prompts):
 | D3  | Live updates       | Server-Sent Events, with `Last-Event-ID` resume.                          |
 | D4  | Streaming          | Reply text fills in while it streams (needs the per-chunk records of D1). |
 | D5  | Changes view       | Markers only (6.7), no diff text.                                         |
-| D6  | Cost               | Tokens only.                                                              |
+| D6  | Cost               | v1–v4: tokens only. v5: an estimate at API list prices (U58), labeled "est.". |
 | D7  | Requests shown     | Everything; background requests muted, with a toggle to hide them.       |
 | D8  | Markdown           | Small hand-written renderer, text escaped first.                          |
 | D9  | First-version scope | Everything marked [M].                                                    |
@@ -584,6 +644,9 @@ with two prompts):
 | D29 | Default view       | Conversation first (U49): the big picture at a glance; Traffic is the detail level. |
 | D30 | Intermediate text  | Model text before a tool call is a step, not a bubble (U51), so the chat stays as the user saw it. |
 | D31 | Chat order         | Oldest at top in Conversation (like a chat); Traffic stays newest first.  |
+| D32 | Hebrew             | `dir="auto"` per text element (U56), not a page-wide RTL switch: mixed Hebrew/English chats read correctly. |
+| D33 | Session names      | `Session N` in words (U57): `S1` was not understood at a glance. |
+| D34 | Cost               | Estimate at list prices with a breakdown and a subscription note (U58); unknown models get no guess. |
 
 ## 10. Instructions for the agent that builds this
 
