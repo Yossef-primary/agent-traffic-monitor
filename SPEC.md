@@ -52,6 +52,7 @@ and must be able to follow the conversation as it grows, request after request.
   gray hint in the input box. The user did not type it.
 - At startup Claude Code sends a small request whose only message is `quota` (no
   tools). It can get `429 rate_limit_error` while everything the user does still works.
+- 
 
 ## 3. Components and files
 
@@ -138,11 +139,18 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 
 - U5 [M] A request is **main** when it is `POST`, its path starts with `/v1/messages`
   (but not `/v1/messages/count_tokens`), its body has a non-empty `tools` list, and it
-  is not a suggestion request (U38). Everything else is **background**.
-- U38 [M] **Suggestion request**: the text of the last `user` message (after
-  normalization, U8) starts with `[SUGGESTION MODE`. It is background, its row has
-  the gray label **suggestion**, and its `→` preview is `suggestion request`, never
-  `You: "…"`. It still takes part in threads (U8) like any other request.
+  is not a known automated request (U38). Everything else is **background**.
+- U38 [M] **Known automated request**: the first text block of the last `user`
+  message that is not a `<system-reminder>` (after normalization, U39) starts with
+  one of the prefixes below. It is background, its row has the gray label from the
+  table, and its `→` preview is the preview text from the table, never `You: "…"`.
+  It still takes part in threads (U8) like any other request. The prefixes live in
+  one list in the code.
+
+| Prefix                                      | Label          | `→` preview          |
+|---------------------------------------------|----------------|----------------------|
+| `[SUGGESTION MODE`                          | **suggestion** | `suggestion request` |
+| `The user stepped away and is coming back.` | **recap**      | `recap request`      |
 - U42 [M] **Automated prompt**: user-role text in a background request, for example
   a suggestion request (U38), a thread-title request, or the startup `quota` request.
   Claude Code wrote it, not the user. It is labeled **Auto**, never **You**, in
@@ -213,6 +221,9 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
   the prompt cache", `bg` "sent by Claude Code itself, not by you", `Auto` "text
   Claude Code wrote itself, not you", `user traffic only` "show only requests that
   carry a prompt you typed".
+- `Prompt` "not known yet whether you typed this; it turns into You or Auto when the
+next request arrives", `side request` "a one-off prompt Claude Code sent itself;
+the conversation went on without it"
 - U41 [M] A **?** button in the header opens a small legend panel: the five colors
   (You, Auto, Model, tool call, tool result), every badge with its meaning (same text
   as U40), and what `→` and `←` mean. Esc or a second click closes it.
@@ -382,6 +393,10 @@ Run section 3's three commands. Then, in the Claude terminal:
 - A25 [M] A long model reply shows its first 80 characters and a chevron; clicking
   the chevron shows the full text.
 - A26 [M] The `HEAD /api/hello` 404 row is a single header line with no `→`/`←` lines.
+- A27 [M] No row ever shows Claude Code's own prompt as **You**. Check with a
+  suggestion request, a recap request (leave the session idle until Claude Code
+  shows a recap), and the thread-title request: each ends up as a gray **Auto**
+  block. Every prompt you typed ends up as **You** within a few seconds of its reply.
 
 ## 9. Decisions
 

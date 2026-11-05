@@ -380,10 +380,11 @@ function onReq(r) {
     threaded: r.method === 'POST' && /^\/v1\/messages(\?|$)/.test(r.path || '') && !!b && Array.isArray(b.tools) && b.tools.length > 0,
     parent: null, thread: '', newFrom: 0, row: null, expanded: false,
   };
-  // U38: a suggestion request is background, because the user did not type it.
-  ex.suggestion = ex.threaded && isSuggestion(ex.msgs);
-  // U5: main = threaded and not a suggestion request.
-  ex.main = ex.threaded && !ex.suggestion;
+  // U38: a known automated request is background, because the user did not type it.
+  ex.autoKind = ex.threaded ? autoKind(ex.msgs) : null;
+  // U5: main = threaded and not a known automated request.
+  ex.main = ex.threaded && !ex.autoKind;
+  ex.pstate = 'you';   // 'pending' | 'you' | 'auto' (resolved by later requests, see resolvePrompts)
   if (ex.threaded) {
     // The same message can come as a string in one request and as a block list in the next.
     ex.keys = ex.msgs.map(m => JSON.stringify(stripCC({ role: m.role, content: blocks(m) })));
@@ -410,6 +411,12 @@ function onReq(r) {
     }
   }
   ex.newMsgs = ex.msgs.slice(ex.newFrom);
+  if (typedBasic(ex)) {
+    ex.pstate = 'pending';
+    const user = [...ex.newMsgs].reverse().find(m => m.role === 'user');
+    ex.promptText = blocks(user).map(bl => bl && bl.type === 'text' ? splitReminders(bl.text).prompt : '').find(Boolean) || '';
+  }
+  resolvePrompts(ex);
   S.ex.set(ex.id, ex); S.order.push(ex.id);
   if (ex.threaded) ex.newMsgs.forEach(m => blocks(m).forEach(bl => {
     if (bl.type === 'tool_use' && bl.id && !S.calls.has(bl.id)) { S.calls.set(bl.id, { ex: ex.id, where: 'new', name: bl.name, input: bl.input }); pairDirty(bl.id); }
@@ -417,10 +424,42 @@ function onReq(r) {
   }));
   mark(ex);
 }
-// Text of the last user message, normalized (string -> text block), starts with the suggestion marker.
-function isSuggestion(msgs) {
+// U38: the one list of prompts Claude Code writes itself (prefix -> label, `→` preview, tooltip).
+const AUTO_KINDS = [
+  { prefix: '[SUGGESTION MODE', label: 'suggestion', preview: 'suggestion request',
+    tip: 'suggestion request: Claude Code asks the model what you might type next (the gray hint in the input box). You did not type it.' },
+  { prefix: 'The user stepped away and is coming back.', label: 'recap', preview: 'recap request',
+    tip: 'recap request: Claude Code asks the model to recap the session after you were away. You did not type it.' },
+];
+// The first text of the last user message that is not a <system-reminder> (after normalization).
+function autoKind(msgs) {
   const last = [...msgs].reverse().find(m => m.role === 'user');
-  return !!last && blocks(last).some(bl => bl && bl.type === 'text' && String(bl.text).trimStart().startsWith('[SUGGESTION MODE'));
+  if (!last) return null;
+  for (const bl of blocks(last)) {
+    if (!bl || bl.type !== 'text') continue;
+    const p = splitReminders(bl.text).prompt;
+    if (p) return AUTO_KINDS.find(k => p.startsWith(k.prefix)) || null;
+  }
+  return null;
+}
+// A main request carrying a prompt is not known to be typed by the user until later requests show it.
+// Typed prompt: it ends up in the history of a later request (-> You).
+// Side request: a later request continues from the same parent without it (-> Auto).
+function resolvePrompts(r) {
+  if (!r.threaded) return;
+  const pre = (a, b, n) => { for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false; return true; };
+  for (const id of S.order) {
+    const x = S.ex.get(id);
+    if (x === r || !x.threaded || x.pstate !== 'pending' || x.sid !== r.sid) continue;
+    if (r.keys.length >= x.keys.length && pre(x.keys, r.keys, x.keys.length)) x.pstate = 'you';
+    else if (x.newFrom > 0 && r.keys.length > x.newFrom && pre(x.keys, r.keys, x.newFrom)) {
+      // The message may have been rewritten (merged with other text) but still carry the typed prompt.
+      const txt = x.promptText;
+      const kept = !!txt && r.msgs.some(m => m.role === 'user' && blocks(m).some(bl => bl && bl.type === 'text' && String(bl.text).includes(txt)));
+      x.pstate = kept ? 'you' : 'auto';
+    } else continue;
+    mark(x);
+  }
 }
 function pairDirty(id) {
   const c = S.calls.get(id), r = S.results.get(id);
@@ -518,7 +557,8 @@ function searchText(ex) {
   return ex._text = parts.join('\n').toLowerCase();
 }
 // U44: a main exchange whose new messages hold a prompt the user typed (its `→` line is `You: "…"`).
-function hasTypedPrompt(ex) {
+function hasTypedPrompt(ex) { return typedBasic(ex) && ex.pstate === 'you'; }
+function typedBasic(ex) {
   if (!ex.main) return false;
   const user = [...ex.newMsgs].reverse().find(m => m.role === 'user');
   return !!user && blocks(user).some(bl => bl && bl.type === 'text' && splitReminders(bl.text).prompt);
@@ -548,7 +588,8 @@ const TIP = {
   newthread: 'new thread: this request does not continue any earlier request (a subagent, a compaction or a new chat)',
   sys: 'the system instructions differ from the previous request in this thread',
   tools: 'the tool list differs from the previous request in this thread',
-  suggestion: 'suggestion request: Claude Code asks the model what you might type next (the gray hint in the input box). You did not type it.',
+  prompt: 'not known yet whether you typed this; it turns into You or Auto when the next request arrives',
+  side: 'side request: a one-off prompt Claude Code sent itself; the conversation went on without it',
   auto: 'Auto: text Claude Code wrote itself, not you',
   end_turn: 'the model finished its answer',
   tool_use: 'the model stopped to ask for a tool',
@@ -556,6 +597,12 @@ const TIP = {
   stop_sequence: 'the model stopped at a stop sequence',
 };
 const tipFor = (stop) => TIP[stop] || ('stop reason: ' + stop);
+// Who wrote the user-role text of this request's new messages: 'you' | 'pending' | 'auto'. History is always 'you'.
+function who(ex, hist) {
+  if (hist) return 'you';
+  if (!ex || !ex.main) return 'auto';
+  return ex.pstate === 'pending' ? 'pending' : ex.pstate === 'auto' ? 'auto' : 'you';
+}
 function badge(cls, text, tip) { return `<span class="badge ${cls}" title="${esc(tip)}">${esc(text)}</span>`; }
 function threadTag(ex) {
   const bg = badge('', 'bg', TIP.bg);
@@ -567,15 +614,17 @@ function threadTag(ex) {
   return ex.main ? tag : tag + bg;
 }
 function reqPreview(ex) {
-  if (ex.suggestion) return `<span class="k-auto">suggestion request</span>`;
+  if (ex.autoKind) return `<span class="k-auto">${esc(ex.autoKind.preview)}</span>`;
   if (!ex.msgs.length) return `<span class="k-muted">${esc(ex.req.method + ' ' + ex.req.path)}</span>`;
   const user = [...ex.newMsgs].reverse().find(m => m.role === 'user');
   const items = [];
   if (user) for (const bl of blocks(user)) {
     if (bl.type === 'text') {
       const p = splitReminders(bl.text).prompt;
-      if (p) items.push(ex.main ? `<span class="k-you"><b>You:</b> “${esc(firstLine(p))}”</span>`   // U42: not typed by the user
-        : `<span class="k-auto" title="${esc(TIP.auto)}"><b>Auto:</b> “${esc(firstLine(p))}”</span>`);
+      if (p) { const w = who(ex, false);   // U42: never You for text Claude Code wrote
+        items.push(w === 'you' ? `<span class="k-you"><b>You:</b> “${esc(firstLine(p))}”</span>`
+          : w === 'pending' ? `<span class="k-you" title="${esc(TIP.prompt)}"><b>Prompt:</b> “${esc(firstLine(p))}”</span>`
+          : `<span class="k-auto" title="${esc(TIP.auto)}"><b>Auto:</b> “${esc(firstLine(p))}”</span>`); }
     }
     else if (bl.type === 'tool_result') {
       const c = S.calls.get(bl.tool_use_id);
@@ -608,7 +657,9 @@ function rowHead(ex) {
   const st = !ex.status ? `<span class="badge"><span class="spin"></span> in progress</span>`
     : `<span class="badge ${ex.status < 300 ? 'ok' : 'bad'}">${ex.status}</span>`;
   const marks = [];
-  if (ex.suggestion) marks.push(badge('sug', 'suggestion', TIP.suggestion));
+  if (ex.autoKind) marks.push(badge('sug', ex.autoKind.label, ex.autoKind.tip));
+  if (ex.main && typedBasic(ex) && ex.pstate === 'pending') marks.push(badge('sug', 'Prompt', TIP.prompt));
+  if (ex.main && ex.pstate === 'auto') marks.push(badge('sug', 'side request', TIP.side));
   if (ex.threaded) {
     if (ex.newThread) marks.push(badge('mk', 'new thread', TIP.newthread));
     else marks.push(badge('mk', `+${ex.newMsgs.length} msgs`, `${ex.newMsgs.length} message${ex.newMsgs.length === 1 ? '' : 's'} added since the previous request in this thread`));
@@ -755,11 +806,11 @@ function exLink(exId, toolId, to, text) {
   a.addEventListener('click', e => { e.stopPropagation(); jump(toolId, to); });
   return a;
 }
-function renderBlock(bl, role, ex, key) {
+function renderBlock(bl, role, ex, key, hist = false) {
   if (!bl) return null;
   switch (bl.type) {
     // U42: user-role text in a background request was written by Claude Code, not typed by the user.
-    case 'text': return role === 'user' ? userText(bl.text, key, !!ex && !ex.main) : role === 'system' ? systemText(bl.text, key) : modelText(bl.text, key);
+    case 'text': return role === 'user' ? userText(bl.text, key, who(ex, hist)) : role === 'system' ? systemText(bl.text, key) : modelText(bl.text, key);
     case 'tool_use': case 'server_tool_use': return callCard(bl, key, role === 'reply');
     case 'tool_addition': {
       const t = bl.tool || {}, name = (t.definition && t.definition.name) || t.name || '?';
@@ -779,13 +830,14 @@ function renderBlock(bl, role, ex, key) {
     }
   }
 }
-function userText(text, key, auto = false) {
+function userText(text, key, w = 'you') {
   const { prompt, reminders } = splitReminders(text);
   const frag = document.createDocumentFragment();
-  const label = auto ? 'Auto' : 'You';
+  const auto = w === 'auto';
+  const label = auto ? 'Auto' : w === 'pending' ? 'Prompt' : 'You';
   if (prompt) {
     const d = h('div', { class: 'blk ' + (auto ? 'auto' : 'you') },
-      h('div', { class: 'bh' }, h('span', { class: 'lbl', title: auto ? TIP.auto : 'text you typed' }, label)), longText(prompt, key + 'p'));
+      h('div', { class: 'bh' }, h('span', { class: 'lbl', title: auto ? TIP.auto : w === 'pending' ? TIP.prompt : 'text you typed' }, label)), longText(prompt, key + 'p'));
     d.append(copyBtn(() => prompt)); frag.append(d);
   }
   reminders.forEach((r, i) => {
@@ -844,9 +896,9 @@ function resultCard(bl, key) {
   d.append(copyBtn(() => resultText(bl)));
   return d;
 }
-function renderMsg(m, ex, key) {
+function renderMsg(m, ex, key, hist = false) {
   const d = h('div', { class: 'msg' }, h('div', { class: 'role' }, m.role === 'user' ? 'user turn' : m.role === 'assistant' ? 'assistant turn' : m.role + ' message'));
-  blocks(m).forEach((bl, i) => d.append(renderBlock(bl, m.role, ex, key + '.' + i)));
+  blocks(m).forEach((bl, i) => d.append(renderBlock(bl, m.role, ex, key + '.' + i, hist)));
   return d;
 }
 
@@ -924,7 +976,7 @@ function buildSection(ex, name) {
       btn.addEventListener('click', () => { moreState.add(k); rebuild(ex, 'conv'); });
       body.append(btn);
     }
-    earlier.slice(from).forEach((m, i) => body.append(renderMsg(m, ex, k + (from + i))));
+    earlier.slice(from).forEach((m, i) => body.append(renderMsg(m, ex, k + (from + i), true)));
   } else if (name === 'sys') {
     const texts = sysText(b.system);
     if (!texts.length) body.append(h('div', { class: 'none' }, 'No system instructions.'));
@@ -1216,7 +1268,8 @@ function buildHelp() {
     h('dl', null, ...bd('T1', TIP.thread), ...bd('+2 msgs', '2 messages added since the previous request in this thread'),
       ...bd('new thread', TIP.newthread), ...bd('system changed', TIP.sys), ...bd('tools changed', TIP.tools),
       ...bd('end_turn', TIP.end_turn), ...bd('tool_use', TIP.tool_use), ...bd('max_tokens', TIP.max_tokens),
-      ...bd('bg', TIP.bg), ...bd('suggestion', TIP.suggestion), ...bd('Auto', TIP.auto),
+      ...bd('bg', TIP.bg), ...AUTO_KINDS.flatMap(k => bd(k.label, k.tip)), ...bd('Auto', TIP.auto),
+      ...bd('Prompt', TIP.prompt), ...bd('side request', TIP.side),
       ...bd('cache r / w', 'input tokens read from / written to the prompt cache'),
       ...bd('user traffic only', 'show only requests that carry a prompt you typed')));
 }

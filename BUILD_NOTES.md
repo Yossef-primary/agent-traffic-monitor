@@ -93,3 +93,18 @@ Choices where the spec was silent:
 - "Typed prompt" for U44 = the last user message of the new messages has non-reminder text.
 - Tested by replaying a real `traffic.jsonl` (123 records, 9 requests) in headless Chrome: no console errors.
   Not run: A8 and the long-session checks (A15) on the new build.
+
+## Build 3: dashboard.html updated to the newer SPEC.md v3
+
+- U38: known automated requests come from one list in the code (`AUTO_KINDS`): `[SUGGESTION MODE` (label
+  **suggestion**) and `The user stepped away and is coming back.` (label **recap**). Both are background rows
+  with their own preview text. The last user message's first non-reminder text is what gets matched.
+- **Prompt** / **side request** (new tooltips): a main request with a prompt starts as `Prompt` (shown as
+  `Prompt: "…"`). It becomes **You** when a later request in the session has it in its history, and **Auto**
+  (badge `side request`) when a later request continues from the same parent without it.
+- Choices where the spec was silent: if a later request rewrote the message but still contains the typed
+  text (seen with a safety-classifier retry), the prompt counts as typed (You). A prompt that starts a
+  thread stays `Prompt` until a later request confirms it. "User traffic only" shows `You:` rows only, so a
+  still-pending `Prompt` row is hidden until it resolves.
+- The `?` legend lists the new badges. Replayed the real log (11 requests) in headless Chrome: no console
+  errors; recap shows as a muted `recap` row, typed prompts end as You. A27 not checked on live idle recap.
