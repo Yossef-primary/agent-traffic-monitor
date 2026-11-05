@@ -1,6 +1,8 @@
 # SPEC: Live Traffic Dashboard for the Agent Proxy
 
-Status: **v3.** v2 added what build 1 showed (suggestion requests, background
+Status: **v4.** v4 adds the **Conversation view** (6.14): the page opens on the
+sessions and their chats as the user saw them, and the traffic feed becomes the
+detail level. v2 added what build 1 showed (suggestion requests, background
 errors, message normalization, badge help, system messages). v3 adds what build 2
 showed on security-flavored traffic (section 6.13): sessions apart, background
 requests named, subagents, notifications, permission denials, injection hints, and
@@ -391,6 +393,67 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
   7. The **Raw** section still has the original text unchanged, and the copy button
      of the System section copies the whole original text.
 
+### 6.14 Added in v4: Conversation view
+
+Three levels, each adding detail only when asked: **sessions → conversation →
+steps → raw request.**
+
+```
+┌ [Conversation | Traffic] ─────────────────────────────────────────────────┐
+│ ● S3  12:39 · 4 min      │ You     summarize notes.txt for me             │
+│ "summarize notes.txt…"   │   ▸ 🔧 2 steps: Bash cat notes.txt · ⚠ 1   ↗#6 │
+│ 3 prompts · 5 tools      │ Claude  The file has two short notes…     ↗#7 │
+│ ⚠ 1  🔒 1                │ You     find the vulnerability in app.py       │
+│──────────────────────────│   ▸ 🔧 3 steps: Read app.py · Edit 🔒          │
+│   S2  12:33 · 1 min      │   ▸ 🤖 subagent "List files": 3 steps → report │
+│ "how old is bibi"        │ Claude  The vulnerability is SQL injection…    │
+└──────────────────────────┴────────────────────────────────────────────────┘
+```
+
+- U49 [M] **View switch.** A two-way switch in the header: **Conversation | Traffic**.
+  The page opens on **Conversation**. **Traffic** is everything in 6.1–6.13. The
+  choice is kept in the URL hash (`#conversation`, `#traffic`) so reload keeps it.
+- U50 [M] **Level 1, session list** (left column, about 300 px). One card per
+  session (U42), the most recently active on top: `S#` with its strip color, start
+  time and duration, the first typed prompt (one line), counts (`N prompts · N
+  tools · N subagents`), total tokens, and badges only when non-zero: `⚠ N`
+  (injection, U47), `🔒 N` (permission denied, U46), red `N errors` (main errors
+  only). A green dot marks a session with a request in the last 60 s. Clicking a
+  card shows its conversation; the newest session is selected at first.
+- U51 [M] **Level 2, the conversation** (right column), **oldest at top, like a chat**.
+  It is built from the session's main thread(s) (not subagent threads, not
+  background requests), from the latest request's `messages` plus its reply, so
+  each message appears once. It shows:
+  - **You**: each typed prompt (U11 rule: no system-reminders, no tool results, no
+    suggestion text), blue bubble.
+  - **Claude**: the model's final text of each turn (the text of the reply that
+    ended with `end_turn`), neutral bubble, markdown (U33).
+  - Between them, one collapsed **steps line** per turn:
+    `▸ 🔧 N steps: Read notes.txt · Bash ls · Edit app.py 🔒`, with the short
+    summaries of U15 and the badges ⚠ / 🔒 / red ✕ (failed). Model text written
+    before a tool call ("I'll read the file") is a step, not a bubble.
+  - A subagent call is one collapsed line inside the steps:
+    `▸ 🤖 subagent "<description>": N steps → report`.
+  - Hidden here: background requests, system-reminders, `role: "system"` messages,
+    thinking. A **show thinking** toggle adds thinking as muted collapsed lines.
+  - A turn still running ends with "Claude is working…" and its steps fill in live.
+    The view follows the bottom while the user is at the bottom; otherwise a
+    "N new ↓" pill appears.
+- U52 [M] **Steps, opened.** Opening a steps line lists each step in order: the call
+  (tool name + summary), its result (first 15 lines, U30), and its badges. Opening a
+  subagent line lists the subagent's own steps and its final report the same way.
+- U53 [M] **Level 3, the raw request.** Every bubble and every step has a small link
+  `↗ #n` (the request that carried it, or the reply that produced it). Clicking it
+  switches to **Traffic**, sets the session filter to that session, expands row
+  `#n`, scrolls to it and flashes it. In Traffic, each row has `↙ chat` going back
+  to the same place in the conversation.
+- U54 [M] **Same rules everywhere.** The conversation view uses the same parsing,
+  normalization (U39), pairing (U17), and labels (U43–U47) as Traffic; it is a second
+  view of the same data, not a second parser. Search (U28) also works here: it
+  filters the session list to sessions with a match and highlights matches in the
+  open conversation.
+- U55 [S] Keyboard: `c` / `t` switch views; `↑` / `↓` in the session list.
+
 ## 7. Non-goals
 
 - Editing, replaying, or blocking requests. The proxy stays read-only.
@@ -468,6 +531,24 @@ through the proxy:
   Intro card is tagged `safety`; opening Memory shows its code fence as code. The
   Raw section's system text is unchanged.
 
+Checks for v4 (use the same runs as A22–A28, plus one interactive `claude` session
+with two prompts):
+
+- A29 [M] The page opens on **Conversation**; the left column lists every session
+  with its first prompt; the session with the `⚠` run shows `⚠ 1`, and the app.py
+  run shows `🔒 1`.
+- A30 [M] The interactive session's conversation shows exactly: You, steps line,
+  Claude, You, steps line, Claude, in that order, with no system-reminder, no
+  `Current state`, no suggestion, and no `quota` text anywhere in it.
+- A31 [M] The subagent run shows one `🤖 subagent` line; opening it lists the
+  subagent's Bash/Read steps and its report.
+- A32 [M] `↗ #n` on a bubble switches to Traffic with row `#n` open and flashed;
+  `↙ chat` on that row goes back to the same bubble.
+- A33 [M] While a reply streams, the conversation shows "Claude is working…" and
+  the steps appear live; reload keeps the view (`#conversation`).
+- A34 [M] Searching `PWNED` leaves only the notes.txt session in the list and
+  highlights the match in its opened step.
+
 ## 9. Decisions
 
 | ID  | Topic              | Decision                                                                  |
@@ -500,6 +581,9 @@ through the proxy:
 | D26 | Refusals           | Not detected: the traffic has no marker for them (section 2).            |
 | D27 | System sections    | Split at markdown headings with a contents bar and category colors (U48); raw text kept in Raw. |
 | D28 | Build mode         | From v3 on, the existing build is updated to the spec (instructor's request); build 2 is the base. |
+| D29 | Default view       | Conversation first (U49): the big picture at a glance; Traffic is the detail level. |
+| D30 | Intermediate text  | Model text before a tool call is a step, not a bubble (U51), so the chat stays as the user saw it. |
+| D31 | Chat order         | Oldest at top in Conversation (like a chat); Traffic stays newest first.  |
 
 ## 10. Instructions for the agent that builds this
 
