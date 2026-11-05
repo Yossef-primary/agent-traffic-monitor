@@ -1,6 +1,7 @@
 # SPEC: Live Traffic Dashboard for the Agent Proxy
 
-Status: **v5.** v5 makes the page read well in Hebrew (RTL), writes `Session 1`
+Status: **v6.** v6 groups the Traffic view by session, each session with a summary and
+two charts (6.16). v5 made the page read well in Hebrew (RTL), writes `Session 1`
 instead of `S1`, and makes token numbers clear with an estimated cost per
 session (6.15). v4 added the **Conversation view** (6.14): the page opens on the
 sessions and their chats as the user saw them, and the traffic feed becomes the
@@ -498,6 +499,69 @@ steps → raw request.**
      model shows tokens and `cost ?` (never a guessed price). Amounts below $0.01
      show 3 decimals (`$0.003`), otherwise 2.
 
+### 6.16 Added in v6: Traffic grouped by session, with two charts
+
+```
+┌ Traffic ──────────────────────────────────────────────────────────────────┐
+│ ▾ Session 3 · 12:39–12:43 · "summarize notes.txt…"  ● live                │
+│   12 requests (7 bg) · 3 prompts · 5 tools · sent 120k · recv 2.1k ≈ $0.02│
+│   ⚠ 1  🔒 1                                                    ↙ chat     │
+│   ┌ Tokens per request ───────────┐ ┌ Timeline ───────────────────────┐   │
+│   │ ▇▇ stacked bars, one per #n   │ │ main     ━━  ━━━   ━━           │   │
+│   │ (cache read/write, new, out)  │ │ subagent    ━━━━                │   │
+│   └───────────────────────────────┘ │ backgr.  ▪   ▪  ▪   ▪           │   │
+│                                     └─────────────────────────────────┘   │
+│   rows #12 … #1 (newest first, as in 6.4)                                 │
+│ ▸ Session 2 · 12:33 · "how old is bibi" · 4 requests · ≈ $0.004           │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+- U59 [M] **Grouped by session.** Traffic shows one **session section** per session
+  (U57 names), the most recently active on top. Requests without a session (startup
+  `HEAD /api/hello`) go into the session whose first request follows within 5 s;
+  otherwise into a last section **No session**. Inside a section the rows are
+  exactly the rows of 6.4 (newest first, same look, same expand behavior). All
+  filters and search (6.10) apply inside sections; a section with no visible rows
+  is hidden.
+- U60 [M] **Section header.** Always visible, also when collapsed: chevron, session
+  name with its strip color (U42), time span `12:39–12:43`, first typed prompt
+  (`dir="auto"`, one line), and `● live` if a request came in the last 60 s. Second
+  line: `N requests (N bg) · N prompts · N tools · N subagents · sent … · recv … ≈
+  $… est.` (U58 rules), badges `⚠ N`, `🔒 N`, red `N errors` when non-zero, and a
+  link `↙ chat` to that session in Conversation (U53).
+- U61 [M] **Open / closed.** Clicking the header opens or closes the section. At
+  first only the most recently active session is open. The open/closed state of
+  each section is kept across live updates and reloads (`localStorage`, keyed by
+  session id). `↗ #n` from Conversation (U53) opens the right section before
+  scrolling. Buttons **open all** / **close all** sit above the sections.
+- U62 [M] **Chart 1: tokens per request.** Under an open section header, left
+  chart, about 360 × 140 px, inline SVG drawn by the page (no library). One stacked
+  bar per **main** request of the session, in time order left to right (labels
+  `#n` under every bar when ≤ 20 bars, else every 5th). Stack, bottom to top:
+  cache read, cache write, new input, output, in four fixed colors that are the same
+  in the legend, the header breakdown (U58) and both themes, and readable for
+  color-blind users (differ in lightness too). Y axis in tokens (`0`, `50k`,
+  `100k`). Hovering a bar shows a tooltip with the four numbers and `≈ $…`;
+  clicking it expands and scrolls to that row. Purpose: shows the conversation
+  growing, and how much of it the cache absorbs.
+- U63 [M] **Chart 2: timeline.** Right chart, same size. X axis is time from the
+  session's first request to its last (tick labels in seconds or `m:ss`). Three
+  lanes: **main**, **subagent**, **background**. Each request is a bar from its `req`
+  to its `end` time; a request still running grows to "now" and is striped. Bar
+  color by lane; a red outline for errors, an orange dot for permission denied, a
+  `⚠` mark for injection. Hovering shows `#n · label (U43) · 2.3s · sent … / recv
+  …`; clicking expands that row. Purpose: shows what the harness does around each
+  prompt (parallel background requests, subagent running beside the main
+  thread, waiting time).
+- U64 [M] **Charts and live data.** Both charts redraw at most once per second while
+  their section is open, and not at all while it is closed. A redraw replaces the
+  SVG contents only; it never re-creates the section header or rows, so clicks and
+  open rows are never lost (this also fixes lost clicks seen in v4 when lists
+  re-rendered every second: no list or header is re-created unless its data
+  changed).
+- U65 [S] With fewer than 2 main requests, chart 1 shows "not enough requests yet"
+  instead of one lonely bar.
+
 ## 7. Non-goals
 
 - Editing, replaying, or blocking requests. The proxy stays read-only.
@@ -609,6 +673,26 @@ Checks for v5:
 - A39 [M] A request with a model not in the price table shows `cost ?` and is left
   out of the totals, with "N requests without a price" in the breakdown.
 
+Checks for v6:
+
+- A40 [M] Traffic shows one section per session, newest activity on top; only the
+  top one is open; each header shows name, time span, first prompt, counts, tokens,
+  cost and badges.
+- A41 [M] Closing a section, then sending a new prompt in another session: the
+  closed one stays closed, the open one stays open, and an expanded row stays
+  expanded. Reload keeps the same open/closed sections.
+- A42 [M] In the subagent session, chart 1 shows one bar per main request with the
+  cache-read part growing request after request; hovering a bar shows four numbers
+  that match that row; clicking it opens that row.
+- A43 [M] In the same session, chart 2 shows the subagent bar in the subagent lane
+  overlapping main requests in time, and status-summary/title requests in the
+  background lane; the injection request has a `⚠` mark.
+- A44 [M] During a live reply, the running bar grows and is striped; clicking a
+  session header during live updates works on the first click, every time (try 10
+  clicks).
+- A45 [M] The `HEAD /api/hello` row sits in the session it started, not in a
+  separate group, when that session's first request follows within 5 s.
+
 ## 9. Decisions
 
 | ID  | Topic              | Decision                                                                  |
@@ -647,6 +731,9 @@ Checks for v5:
 | D32 | Hebrew             | `dir="auto"` per text element (U56), not a page-wide RTL switch: mixed Hebrew/English chats read correctly. |
 | D33 | Session names      | `Session N` in words (U57): `S1` was not understood at a glance. |
 | D34 | Cost               | Estimate at list prices with a breakdown and a subscription note (U58); unknown models get no guess. |
+| D35 | Traffic layout     | Sections per session (U59), newest first inside, collapsed except the latest: big picture first, rows on demand. |
+| D36 | Charts             | Tokens-per-request stacked bars + request timeline lanes (U62, U63), inline SVG, no library: one shows cost/caching, the other what the harness does. |
+| D37 | Re-rendering       | Update only what changed; never re-create a header or list on a timer (U64). |
 
 ## 10. Instructions for the agent that builds this
 
