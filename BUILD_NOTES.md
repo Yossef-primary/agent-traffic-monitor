@@ -94,6 +94,24 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 - U58: the "$ / 1M" column shows the price when all priced requests in the group use one model, else "by model".
 - U58: the old `in / out / cache r / cache w` header and row numbers are replaced; the four token kinds now appear only in the breakdown.
 
+### v6 (updated in place, not rebuilt)
+
+- U59: a session-less request goes into a session when that session's first request comes 0–5 s after it; it is moved there at that moment (it waits in **No session** until then). No session is always the last section.
+- U59: section order is by latest activity (request or reply end); sections are moved only when the order changes, never re-created.
+- U60: the counts, cost and badges in a section header include the session-less rows pulled into it; the Conversation view still counts only requests that carry the session id.
+- U61: the open/closed state is stored per session id in `localStorage` (`secOpen:<id>`). The first burst of records after load is history: when it has been quiet for 800 ms, the most recently active section without a stored state is opened and the others are closed (and stored). A session that first appears after that opens.
+- U61: open all / close all sit above the sections and store every section's state.
+- U62: "main request" for chart 1 = the main lane of chart 2: a main request that is not part of a subagent thread (subagent requests would break the growing-conversation picture).
+- U62: colors: cache read `#c6dbef`, cache write `#6baed6`, new input `#fd8d3c`, output `#a63603` (blue/orange, light to dark); the U58 breakdown shows the same swatches.
+- U62/U63: the hover text is the SVG `<title>` tooltip.
+- U63: overlapping bars in a lane are spread over up to 3 sub-rows so parallel requests stay visible; the ⚠ mark sits above the bar, the permission dot at its right end.
+- U63: lane labels are main / subagent / background; the hover label is the U43 purpose for background requests.
+- U64: a 1 s timer redraws charts of open sections that changed or have a running request, and updates header text (the live dot ages without new data); it never re-creates elements.
+- U64: row headers and preview lines are replaced only when their content changed (HTML compared). The global header's token group and the Conversation session cards are persistent elements whose text is updated. Cards are moved only when the order changes.
+- U64: the Conversation chat itself is still rebuilt when its session's data changes (that is a data change, not a timer).
+- U65 [S] is included: chart 1 says "not enough requests yet" with fewer than 2 main requests.
+- `[hidden]` always hides (some badges set `display`).
+
 ## Self-test (ports 8141 / 8150, `test.jsonl`)
 
 Real traffic: `claude -p "read proxy.py and summarize it in one sentence"`, plus one
@@ -180,3 +198,19 @@ A request with an unknown model (`claude-mystery-9-9`) was appended as a synthet
 | A38 each card shows tokens and `≈ $… est.`; the cards sum to the header total (0.0392 = 0.0392) | pass |
 | A39 the unknown model shows `cost ?` on its row and card, is left out of the cost totals, and the breakdown says "1 request without a price" | pass |
 | Regression: A30 order, subagent line, permission/injection/notification previews, header counts, reload keeps the view | pass |
+
+### v6 checks (A40–A45)
+
+Same log as before (sessions 1–11; session 11 is a new two-prompt `stream-json` run through the
+test proxy 8141 → `test.jsonl`, dashboard 8150). For A44 a slow replay of session 11 under a new
+session id (session 12) gave about a minute of continuous live updates, because a real reply finishes in a few seconds.
+
+| Check | Result |
+|-------|--------|
+| A40 one section per session, newest activity on top, only the top one open on a fresh load; header shows name, time span, first prompt, counts, tokens, cost, badges; No session last | pass |
+| A41 Session 7 open with row #39 expanded and Session 8 closed; two new sessions streamed in; states and the expanded row unchanged; after reload all 13 sections keep their state | pass |
+| A42 Session 7 chart 1: bars #32, #34, #39 with cache read 22,256 → 34,204 → 36,790; the hover numbers match the row; clicking bar #34 opens row #34 | pass |
+| A43 Session 7 chart 2: subagent bars (#33, #36–#38) overlap main #34 in time; status summaries and the startup check in the background lane; #38 (injection) has the ⚠ mark, #36 the permission dot | pass |
+| A44 10 real mouse clicks on the Session 12 header while #66 streamed: 10 of 10 toggled (closed/open alternating); the running bar is striped | pass |
+| A45 each startup `HEAD /api/hello` sits in the session it started (#1 → Session 1 … #51 → Session 9); one synthetic HEAD with no session after it stays in No session | pass |
+| Regression: Conversation (A30 order), filters and search per section, `↗ #n` opens a closed section, header counts | pass |

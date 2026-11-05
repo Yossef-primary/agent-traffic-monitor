@@ -237,6 +237,37 @@ mark.inj { background:#f59e0b; color:#000; font-weight:600; }
 .sblock { margin:6px 0 10px; }
 .sblock-h { font-weight:600; font-size:13px; margin:6px 0 2px; }
 
+/* v6: session sections and charts */
+[hidden] { display:none !important; }
+.secbar { display:flex; gap:8px; align-items:center; margin:2px 0 4px; flex-wrap:wrap; }
+.ssec { background:var(--bg); border:1px solid var(--line); border-radius:10px; margin-bottom:8px; }
+.ssec.scol { border-left:6px solid var(--sess); }
+.ssec-h { cursor:pointer; padding:7px 12px; display:flex; flex-direction:column; gap:2px; background:var(--panel); border-radius:10px; user-select:none; }
+.ssec.open > .ssec-h { border-radius:10px 10px 0 0; border-bottom:1px solid var(--line); }
+.ssec-h .l1, .ssec-h .l2 { display:flex; flex-wrap:wrap; gap:3px 10px; align-items:center; min-width:0; }
+.ssec-h .l2 { font-size:12.5px; }
+.ssec-h .sname { font-size:14.5px; }
+.ssec-h .sprompt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1 1 200px; }
+.ssec-h .slive { color:var(--res); font-weight:600; font-size:12.5px; }
+.chev::before { content:"▸"; color:var(--muted); }
+.ssec.open .chev::before { content:"▾"; }
+.ssec-b { display:none; padding:8px 8px 4px; }
+.ssec.open > .ssec-b { display:block; }
+.ssec-rows { display:flex; flex-direction:column; gap:6px; }
+.charts { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:8px; }
+.cbox { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:100%; }
+.ctitle { font-weight:600; font-size:12.5px; margin-bottom:2px; }
+svg.chart { display:block; max-width:100%; height:auto; }
+svg.chart .cgrid { stroke:var(--line); stroke-width:1; }
+svg.chart .caxis { fill:var(--muted); font-size:9.5px; font-family:ui-monospace, Menlo, monospace; }
+svg.chart .cmuted { fill:var(--muted); font-size:12px; }
+svg.chart .cinj { fill:#b45309; font-size:10px; font-weight:700; }
+svg.chart .cbar { cursor:pointer; }
+svg.chart .cbar:hover rect:not([fill="transparent"]) { opacity:.8; }
+.clegend { display:flex; flex-wrap:wrap; gap:3px 10px; font-size:11.5px; color:var(--muted); margin-top:2px; }
+.clegend i, .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+.clegend i.striped { background:repeating-linear-gradient(45deg, #6b7280 0 3px, transparent 3px 6px); border:1px solid #6b7280; }
+
 /* v5: right-to-left text, cost */
 code, pre, .json, .tsum, .c-call, .tname { unicode-bidi:isolate; }
 code { direction:ltr; }
@@ -500,7 +531,7 @@ function aggCost(exs) {
 }
 function costTable(a, opts) {
   const one = a.prices.size === 1 ? [...a.prices][0] : null;
-  const rows = COST_ROWS.map(([k, name, ex]) => h('tr', null, h('td', null, name), h('td', null, a.t[k].toLocaleString()),
+  const rows = COST_ROWS.map(([k, name, ex]) => h('tr', null, h('td', null, h('i', { class: 'sw', style: `background:${TOKC[k]}` }), name), h('td', null, a.t[k].toLocaleString()),
     h('td', null, one ? '$' + one[k].toFixed(Math.max(2, (String(one[k]).split('.')[1] || '').length)) : a.prices.size ? 'by model' : '–'), h('td', null, fmtCost(a.cost[k])), h('td', { class: 'ex' }, ex)));
   const kids = [h('table', null,
     h('tr', null, h('th', null, ''), h('th', null, 'tokens'), h('th', null, '$ / 1M'), h('th', null, 'cost'), h('th', null, '')),
@@ -525,6 +556,19 @@ function attachCost(el, build) {
   el.addEventListener('mouseleave', () => { if (popPinned !== el) popTimer = setTimeout(() => { if (!popPinned) pop().hidden = true; }, 250); });
   el.addEventListener('click', e => { e.stopPropagation(); if (popPinned === el) { popPinned = null; pop().hidden = true; } else { popPinned = el; show(); } });
   return el;
+}
+function costEl(opts) {
+  opts = opts || {};
+  const t1 = document.createTextNode(''), b = h('b'), t2 = document.createTextNode('');
+  const el = h('span', { class: 'cost' }, opts.label ? h('b', null, opts.label + ' ') : null, t1, b, t2);
+  el.set = a => {
+    el._a = a;
+    const unk = a.unpriced && !a.total;
+    t1.nodeValue = `sent ${fmtN(a.sent)} · ${opts.short ? 'recv' : 'received'} ${fmtN(a.recv)} · `;
+    b.textContent = unk ? 'cost ?' : '≈ ' + fmtCost(a.total);
+    t2.nodeValue = opts.est && !unk ? ' est.' : '';
+  };
+  return attachCost(el, () => costTable(el._a, opts));
 }
 function costSpan(a, opts) {
   return attachCost(h('span', { class: 'cost', title: '' }, opts && opts.label ? h('b', null, opts.label + ' ') : null,
@@ -607,6 +651,7 @@ function touch(ex, what) { dirty.add(ex); if (what) ex['dirty_' + what] = true; 
 
 function onRecord(rec) {
   if (!rec || typeof rec !== 'object' || !rec.id) return;
+  noteRecord();
   const ex = getEx(String(rec.id));
   switch (rec.t) {
     case 'req': onReq(ex, rec); break;
@@ -643,7 +688,7 @@ function onReq(ex, rec) {
       S.sessions.set(ex.session, sess = { n: 0, reqs: [], agentPrompts: new Map() });
       sess.name = 'Session ' + (S.sessOrder.length + 1);
       sess.color = SESS_COLORS[S.sessOrder.length % SESS_COLORS.length];
-      sess.ts = rec.ts; sess.prompt = '';
+      sess.ts = rec.ts; sess.prompt = ''; sess.id = ex.session;
       S.sessOrder.push(sess);
     }
     ex.sess = sess;
@@ -930,9 +975,15 @@ function updateRow(ex) {
   }
   if (ex.sysState === 'changed') kids.push(badge('system changed', 'mark', TIP.sysChanged));
   if (ex.parent && ex.toolsState !== 'unchanged') kids.push(badge('tools changed', 'mark', TIP.toolsChanged + ' (' + ex.toolsState + ')'));
-  ex.rh.replaceChildren(...kids);
-  ex.pvIn.replaceChildren(h('span', { class: 'arrow', title: TIP.inArrow }, '→'), h('span', { class: 'pvtext' }, inPreview(ex)));
-  ex.pvOut.replaceChildren(h('span', { class: 'arrow', title: TIP.outArrow }, '←'), h('span', { class: 'pvtext' }, outPreview(ex, er)));
+  swapIfChanged(ex.rh, kids);
+  swapIfChanged(ex.pvIn, [h('span', { class: 'arrow', title: TIP.inArrow }, '→'), h('span', { class: 'pvtext' }, inPreview(ex))]);
+  swapIfChanged(ex.pvOut, [h('span', { class: 'arrow', title: TIP.outArrow }, '←'), h('span', { class: 'pvtext' }, outPreview(ex, er))]);
+}
+function swapIfChanged(el, kids) {
+  const tmp = h('div', null, kids);
+  if (tmp.innerHTML === el._html) return;
+  el._html = tmp.innerHTML;
+  el.replaceChildren(...tmp.childNodes);
 }
 function inPreview(ex) {
   if (!ex.req) return h('span', { class: 'c-muted' }, '(request not in the log)');
@@ -1386,6 +1437,7 @@ function markInjection(root) {
   }
 }
 function jumpRow(target) {
+  openSecOf(target);
   if (!target.row || target.row.hidden) { toast('that row is hidden by the current filters'); return; }
   toggleExpand(target, true);
   target.row.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -1394,6 +1446,7 @@ function jumpRow(target) {
 
 /* ------------------------------------------------------------------ pairing jump (U17) */
 function jump(target, kind, toolId) {
+  openSecOf(target);
   if (!target.row || target.row.hidden) { toast('that row is hidden by the current filters'); return; }
   toggleExpand(target, true);
   const key = kind === 'result' ? 'new' : (S.calls.get(toolId) || {}).where === 'new' ? 'new' : 'reply';
@@ -1540,9 +1593,11 @@ function updateHeader() {
     for (const b of replyCalls(ex)) tools.set(b.name, (tools.get(b.name) || 0) + 1);
     const m = shortModel(ex.model || (ex.reply && ex.reply.model)); if (m) models.add(m);
   }
-  H.req.replaceChildren(h('b', { title: TIP.seq }, String(S.list.length)), ' requests ', h('span', { title: TIP.bg }, `(${bg} bg)`));
+  const rkey = S.list.length + '/' + bg;
+  if (H.req._k !== rkey) { H.req._k = rkey; H.req.replaceChildren(h('b', { title: TIP.seq }, String(S.list.length)), ' requests ', h('span', { title: TIP.bg }, `(${bg} bg)`)); }
   const hc = aggCost(S.list);
-  H.tok.replaceChildren(costSpan(hc, { label: 'Tokens', est: true, bg: true }));
+  if (!H.tokEl) { H.tokEl = costEl({ label: 'Tokens', est: true, bg: true }); H.tok.replaceChildren(H.tokEl); }
+  H.tokEl.set(hc);
   H.err.textContent = `errors ${errs}`; H.err.className = 'hcount ' + (errs ? 'red' : 'zero');
   H.bgerr.textContent = `bg errors ${bgErrs}`;
   H.inj.textContent = `⚠ ${inj}`; H.inj.className = 'hcount ' + (inj ? 'warnc' : 'zero') + (S.f.inj ? ' on' : '');
@@ -1583,11 +1638,256 @@ function schedule() {
   if (!document.hidden) requestAnimationFrame(run);
   setTimeout(run, 150);
 }
+/* ------------------------------------------------------------------ v6: Traffic grouped by session (6.16) */
+// Fixed token colors (U62): same in chart, legend and the U58 breakdown, both themes; differ in lightness too.
+const TOKC = { cr: '#c6dbef', cw: '#6baed6', in: '#fd8d3c', out: '#a63603' };
+const LANEC = { main: '#3b82f6', subagent: '#d97706', background: '#9ca3af' };
+const NOSESS = { name: 'No session', color: null, id: 'nosession', ts: 0, prompt: '', nosess: true };
+const T = { secs: new Map(), order: [], settled: false, settleTimer: null, loadTs: Date.now() / 1000 };
+const secsEl = h('div', { id: 'secs' });
+const secBar = h('div', { class: 'secbar' },
+  h('button', { class: 'tbtn', onclick: () => { for (const s of T.secs.values()) setSecOpen(s, true); } }, 'open all'),
+  h('button', { class: 'tbtn', onclick: () => { for (const s of T.secs.values()) setSecOpen(s, false); } }, 'close all'),
+  h('span', { class: 'c-muted', style: 'font-size:12px' }, 'one section per session, most recently active on top; click a header to open or close it'));
+feed.append(secBar, secsEl);
+const secKey = sess => 'secOpen:' + (sess.id || 'nosession');
+function loadOpen(sess) { const v = load(secKey(sess)); return v == null ? null : v === '1'; }
+
+function groupOf(ex) { return ex.sess || NOSESS; }
+function getSec(sess) {
+  let sec = T.secs.get(sess);
+  if (sec) return sec;
+  sec = { sess, exs: [], open: false, decided: false, last: 0, keyHdr: '', chartsDirty: true, chartKey: '' };
+  const stored = loadOpen(sess);
+  if (stored != null) { sec.open = stored; sec.decided = true; }
+  else if (T.settled) { sec.open = true; sec.decided = true; store(secKey(sess), '1'); } // a session that starts live opens
+  // persistent header: built once, only its text is updated afterwards (U64)
+  const s = {};
+  s.chev = h('span', { class: 'chev' });
+  s.name = h('b', { class: 'sname' }, sess.name);
+  s.span = h('span', { class: 'c-muted' });
+  s.prompt = h('span', { class: 'sprompt', dir: 'auto' });
+  s.live = h('span', { class: 'slive', hidden: true, title: 'a request in the last 60 s' }, '● live');
+  s.counts = h('span', { class: 'c-muted' });
+  s.cost = costEl({ short: true, est: true, bg: true });
+  s.inj = h('span', { class: 'badge inj', hidden: true, title: TIP.inj });
+  s.perm = h('span', { class: 'badge perm', hidden: true, title: TIP.perm });
+  s.err = h('span', { class: 'badge red', hidden: true, title: 'main requests of this session that failed' });
+  s.chat = sess.nosess ? null : h('span', { class: 'src', title: 'open this session in the Conversation view', onclick: e => { e.stopPropagation(); C.sess = sess; C.userPicked = true; setView('conversation'); } }, '↙ chat');
+  const head = h('div', { class: 'ssec-h', title: 'click to open or close this session' },
+    h('div', { class: 'l1' }, s.chev, s.name, s.span, s.prompt, s.live),
+    h('div', { class: 'l2' }, s.counts, s.cost, s.inj, s.perm, s.err, h('span', { class: 'spacer' }), s.chat));
+  head.addEventListener('click', e => { if (e.target.closest('.cost, .src')) return; setSecOpen(sec, !sec.open); });
+  if (sess.color) head.style.setProperty('--sess', sess.color);
+  s.c1 = svgEl('svg', { class: 'chart', viewBox: '0 0 360 150', width: 360, height: 150, role: 'img' });
+  s.c2 = svgEl('svg', { class: 'chart', viewBox: '0 0 360 150', width: 360, height: 150, role: 'img' });
+  const legend1 = h('div', { class: 'clegend' }, [['cr', 'cache read'], ['cw', 'cache write'], ['in', 'new input'], ['out', 'output']].map(([k, l]) => h('span', null, h('i', { style: `background:${TOKC[k]}` }), l)));
+  const legend2 = h('div', { class: 'clegend' }, Object.entries(LANEC).map(([k, c]) => h('span', null, h('i', { style: `background:${c}` }), k)),
+    h('span', null, h('i', { class: 'striped' }), 'running'), h('span', null, h('i', { style: 'background:transparent;outline:2px solid var(--err)' }), 'error'));
+  s.charts = h('div', { class: 'charts' },
+    h('div', { class: 'cbox' }, h('div', { class: 'ctitle', title: 'one stacked bar per main request, oldest left: how the conversation grows and how much of it the prompt cache absorbs' }, 'Tokens per request'), s.c1, legend1),
+    h('div', { class: 'cbox' }, h('div', { class: 'ctitle', title: 'each request from send to end, in three lanes: what the harness does around each prompt' }, 'Timeline'), s.c2, legend2));
+  s.rows = h('div', { class: 'ssec-rows' });
+  sec.s = s;
+  sec.el = h('div', { class: 'ssec' + (sess.color ? ' scol' : '') }, head, h('div', { class: 'ssec-b' }, s.charts, s.rows));
+  if (sess.color) sec.el.style.setProperty('--sess', sess.color);
+  sec.el.classList.toggle('open', sec.open);
+  T.secs.set(sess, sec);
+  return sec;
+}
+function setSecOpen(sec, open) {
+  sec.open = open; sec.decided = true;
+  store(secKey(sec.sess), open ? '1' : '0');
+  sec.el.classList.toggle('open', open);
+  if (open) { sec.chartsDirty = true; drawCharts(sec); }
+}
+function insertRowSorted(rowsEl, ex) {
+  // rows are newest first (6.4); most inserts go on top
+  const first = rowsEl.firstElementChild;
+  if (!first || +first.dataset.seq < ex.seq) { rowsEl.prepend(ex.row); return; }
+  for (const r of rowsEl.children) if (+r.dataset.seq < ex.seq) { rowsEl.insertBefore(ex.row, r); return; }
+  rowsEl.append(ex.row);
+}
+function placeRow(ex) {
+  const sess = groupOf(ex);
+  const sec = getSec(sess);
+  if (ex.sec && ex.sec !== sec) { ex.sec.exs = ex.sec.exs.filter(e => e !== ex); ex.sec.chartsDirty = true; }
+  ex.sec = sec;
+  if (!sec.exs.includes(ex)) sec.exs.push(ex);
+  sec.chartsDirty = true;
+  ex.row.dataset.seq = ex.seq;
+  insertRowSorted(sec.s.rows, ex);
+  // U59: a session's first request pulls in session-less requests from the 5 s before it (startup HEAD /api/hello)
+  if (!sess.nosess && sec.exs.length === 1) {
+    const ns = T.secs.get(NOSESS);
+    if (ns) for (const e of [...ns.exs]) if (e.ts && ex.ts && e.ts <= ex.ts && ex.ts - e.ts <= 5 && !e.sessPulled) { e.sessPulled = true; e.sec = null; ns.exs = ns.exs.filter(x => x !== e); e.groupSess = sess; sec.exs.push(e); insertRowSorted(sec.s.rows, e); e.sec = sec; ns.chartsDirty = true; }
+  }
+}
+function secStats(sec) {
+  const st = { reqs: sec.exs.length, bg: 0, prompts: 0, tools: 0, subs: 0, inj: 0, perm: 0, errs: 0, first: Infinity, last: 0, active: false };
+  const now = Date.now() / 1000;
+  for (const e of sec.exs) {
+    const t = e.end ? e.end.ts : e.ts;
+    if (e.ts && e.ts < st.first) st.first = e.ts;
+    if (t > st.last) st.last = t;
+    if (!done(e) || now - t < 60) st.active = true;
+    if (e.bg) st.bg++;
+    if (e.isMain && !e.subagent) for (let i = e.newStart; i < e.nmsgs.length; i++) if (msgTyped(e.nmsgs[i])) st.prompts++;
+    st.tools += replyCalls(e).length;
+    if (e.subagent && e.subagent.first === e) st.subs++;
+    if (e.injection) st.inj++;
+    for (const [, b] of newBlocks(e)) if (b && b.type === 'tool_result' && isPermDenied(b)) st.perm++;
+    if (e.err && !e.bg) st.errs++;
+  }
+  return st;
+}
+function updateSecHeader(sec) {
+  const st = secStats(sec), s = sec.s, sess = sec.sess;
+  sec.last = st.last;
+  const a = aggCost(sec.exs);
+  const span = st.first === Infinity ? '' : fmtTime(st.first).slice(0, 5) + (fmtTime(st.last).slice(0, 5) !== fmtTime(st.first).slice(0, 5) ? '–' + fmtTime(st.last).slice(0, 5) : '');
+  const counts = `${st.reqs} request${st.reqs === 1 ? '' : 's'} (${st.bg} bg) · ${st.prompts} prompt${st.prompts === 1 ? '' : 's'} · ${st.tools} tool${st.tools === 1 ? '' : 's'} · ${st.subs} subagent${st.subs === 1 ? '' : 's'} ·`;
+  const key = [span, sess.prompt, st.active, counts, a.sent, a.recv, a.total, a.unpriced, st.inj, st.perm, st.errs].join('|');
+  if (key === sec.keyHdr) return;
+  sec.keyHdr = key;
+  // only text and hidden flags change; no element is re-created (U64)
+  s.span.textContent = span;
+  s.prompt.textContent = sess.prompt ? `"${firstLine(sess.prompt, 90)}"` : sess.nosess ? 'requests without a session id' : '';
+  s.prompt.dir = dirFor(sess.prompt);
+  s.live.hidden = !st.active;
+  s.counts.textContent = counts;
+  s.cost.set(a);
+  s.inj.hidden = !st.inj; s.inj.textContent = `⚠ ${st.inj}`;
+  s.perm.hidden = !st.perm; s.perm.textContent = `🔒 ${st.perm}`;
+  s.err.hidden = !st.errs; s.err.textContent = `${st.errs} error${st.errs === 1 ? '' : 's'}`;
+}
+function orderSecs() {
+  const list = [...T.secs.values()].sort((x, y) => (!!x.sess.nosess - !!y.sess.nosess) || (y.last - x.last));
+  // move only what is out of place (never re-create sections)
+  list.forEach((sec, i) => { if (secsEl.children[i] !== sec.el) secsEl.insertBefore(sec.el, secsEl.children[i] || null); });
+  T.order = list;
+  if (!T.settled) list.forEach((sec, i) => { if (!sec.decided) { sec.open = i === 0; sec.el.classList.toggle('open', sec.open); } });
+}
+// The first burst of records is history: when it settles, the most recently active undecided section stays open, the rest closed.
+function noteRecord() {
+  if (T.settled) return;
+  clearTimeout(T.settleTimer);
+  T.settleTimer = setTimeout(() => {
+    T.settled = true;
+    orderSecs();
+    for (const sec of T.secs.values()) if (!sec.decided) { sec.decided = true; store(secKey(sec.sess), sec.open ? '1' : '0'); }
+  }, 800);
+}
+function secVisibility() {
+  for (const sec of T.secs.values()) {
+    const any = sec.exs.some(e => e.row && !e.row.hidden);
+    sec.el.hidden = !any;
+  }
+}
+function openSecOf(ex) { if (ex.sec && !ex.sec.open) setSecOpen(ex.sec, true); }
+
+/* charts (U62, U63): inline SVG drawn by the page */
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, ...kids) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs || {}) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+  for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return e;
+}
+function niceMax(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p; return 10 * p; }
+const laneOf = e => e.bg ? 'background' : e.subagent ? 'subagent' : 'main';
+function chartClick(ex) { return () => { openSecOf(ex); jumpRow(ex); }; }
+function drawTokens(sec) {
+  const svg = sec.s.c1;
+  const exs = sec.exs.filter(e => laneOf(e) === 'main' && e.reply).sort((a, b) => a.seq - b.seq);
+  const W = 360, H2 = 150, L = 38, R = 6, Tp = 8, B = 22;
+  const kids = [];
+  if (exs.length < 2) { svg.replaceChildren(svgEl('text', { x: W / 2, y: H2 / 2, 'text-anchor': 'middle', class: 'cmuted' }, 'not enough requests yet')); return; }
+  const tot = e => { const c = exCost(e).t; return c.cr + c.cw + c.in + c.out; };
+  const max = niceMax(Math.max(...exs.map(tot)));
+  const pw = W - L - R, ph = H2 - Tp - B, step = pw / exs.length, bw = Math.max(2, Math.min(28, step * 0.7));
+  for (const f of [0, 0.5, 1]) {
+    const y = Tp + ph - f * ph;
+    kids.push(svgEl('line', { x1: L, x2: W - R, y1: y, y2: y, class: 'cgrid' }), svgEl('text', { x: L - 4, y: y + 3, 'text-anchor': 'end', class: 'caxis' }, fmtN(Math.round(max * f))));
+  }
+  exs.forEach((e, i) => {
+    const c = exCost(e);
+    let y = Tp + ph;
+    const x = L + i * step + (step - bw) / 2;
+    const g = svgEl('g', { class: 'cbar', 'data-seq': e.seq });
+    for (const k of ['cr', 'cw', 'in', 'out']) {
+      const hgt = c.t[k] / max * ph;
+      if (hgt <= 0) continue;
+      y -= hgt;
+      g.append(svgEl('rect', { x, y, width: bw, height: Math.max(hgt, 0.5), fill: TOKC[k] }));
+    }
+    g.append(svgEl('rect', { x: L + i * step, y: Tp, width: step, height: ph, fill: 'transparent' }));
+    g.append(svgEl('title', null, `#${e.seq}\ncache read ${c.t.cr.toLocaleString()}\ncache write ${c.t.cw.toLocaleString()}\nnew input ${c.t.in.toLocaleString()}\noutput ${c.t.out.toLocaleString()}\n${c.total == null ? 'cost ?' : '≈ ' + fmtCost(c.total)}`));
+    g.addEventListener('click', chartClick(e));
+    kids.push(g);
+    const every = exs.length <= 20 ? 1 : 5;
+    if (i % every === 0) kids.push(svgEl('text', { x: x + bw / 2, y: H2 - 8, 'text-anchor': 'middle', class: 'caxis' }, '#' + e.seq));
+  });
+  svg.replaceChildren(...kids);
+}
+function fmtSec(s) { s = Math.max(0, s); return s < 60 ? (s < 10 ? s.toFixed(1) : Math.round(s)) + 's' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
+function drawTimeline(sec) {
+  const svg = sec.s.c2;
+  const exs = sec.exs.filter(e => e.ts).sort((a, b) => a.seq - b.seq);
+  const W = 360, H2 = 150, L = 64, R = 8, Tp = 8, B = 22;
+  if (!exs.length) { svg.replaceChildren(); return; }
+  const now = Date.now() / 1000;
+  const t0 = Math.min(...exs.map(e => e.ts));
+  const t1 = Math.max(...exs.map(e => e.end ? e.end.ts : now), t0 + 1);
+  const pw = W - L - R, lanes = ['main', 'subagent', 'background'], lh = (H2 - Tp - B) / 3;
+  const X = t => L + (t - t0) / (t1 - t0) * pw;
+  const kids = [svgEl('defs', null, svgEl('pattern', { id: 'stripe-' + sec.sess.name.replace(/\W/g, ''), width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' },
+    svgEl('rect', { width: 6, height: 6, fill: 'var(--panel)' }), svgEl('rect', { width: 3, height: 6, fill: '#6b7280' })))];
+  const stripe = `url(#stripe-${sec.sess.name.replace(/\W/g, '')})`;
+  lanes.forEach((ln, i) => {
+    const y = Tp + i * lh;
+    kids.push(svgEl('line', { x1: L, x2: W - R, y1: y + lh, y2: y + lh, class: 'cgrid' }), svgEl('text', { x: L - 6, y: y + lh / 2 + 3, 'text-anchor': 'end', class: 'caxis' }, ln));
+  });
+  const span = t1 - t0, nt = 4;
+  for (let k = 0; k <= nt; k++) { const t = t0 + span * k / nt; kids.push(svgEl('text', { x: X(t), y: H2 - 8, 'text-anchor': k === 0 ? 'start' : k === nt ? 'end' : 'middle', class: 'caxis' }, fmtSec(t - t0))); }
+  // stack overlapping bars of a lane in up to 3 sub-rows so parallel requests stay visible
+  const rowsEnd = { main: [], subagent: [], background: [] };
+  for (const e of exs) {
+    const ln = laneOf(e), li = lanes.indexOf(ln);
+    const a = e.ts, z = e.end ? e.end.ts : now, running = !e.end;
+    let r = rowsEnd[ln].findIndex(endT => endT <= a); if (r < 0) { r = rowsEnd[ln].length; } if (r > 2) r = 2; rowsEnd[ln][r] = z;
+    const bh = (lh - 6) / 3, y = Tp + li * lh + 3 + r * bh;
+    const x = X(a), w = Math.max(2, X(z) - x);
+    const c = exCost(e);
+    const label = e.bg ? (e.bgKind || 'background') : ln;
+    const g = svgEl('g', { class: 'cbar', 'data-seq': e.seq });
+    g.append(svgEl('rect', { x, y, width: w, height: Math.max(2, bh - 1), rx: 1.5, fill: running ? stripe : LANEC[ln], stroke: e.err ? 'var(--err)' : running ? LANEC[ln] : 'none', 'stroke-width': e.err ? 2 : 1 }));
+    if (e.permDenied) g.append(svgEl('circle', { cx: x + w, cy: y + bh / 2, r: 3, fill: 'var(--perm)' }));
+    if (e.injection) g.append(svgEl('text', { x: x + w / 2, y: y - 1, 'text-anchor': 'middle', class: 'cinj' }, '⚠'));
+    g.append(svgEl('title', null, `#${e.seq} · ${label} · ${(z - a).toFixed(1)}s${running ? ' (running)' : ''} · sent ${fmtN(c.t.in + c.t.cr + c.t.cw)} / recv ${fmtN(c.t.out)}${e.err ? ' · ' + e.err : ''}`));
+    g.addEventListener('click', chartClick(e));
+    kids.push(g);
+  }
+  svg.replaceChildren(...kids);
+}
+function drawCharts(sec) {
+  if (!sec.open || C.view !== 'traffic') return;
+  sec.chartsDirty = false;
+  drawTokens(sec); drawTimeline(sec);
+}
+// U64: charts redraw at most once per second, only for open sections that changed or have a running request
+setInterval(() => {
+  if (C.view !== 'traffic' || document.hidden) return;
+  for (const sec of T.secs.values()) if (sec.open && (sec.chartsDirty || sec.exs.some(e => !e.end))) drawCharts(sec);
+  // the live dot and time span age without new data: update text only
+  for (const sec of T.secs.values()) updateSecHeader(sec);
+}, 1000);
+
 function headerBottom() { return $('#hdr').getBoundingClientRect().bottom; }
 function findAnchor() {
   const hb = headerBottom();
-  for (const row of feed.children) {
-    if (row.hidden || !row.classList.contains('row')) continue;
+  for (const row of feed.querySelectorAll('.ssec-h, .row')) {
+    if (!row.offsetParent) continue;
     const r = row.getBoundingClientRect();
     if (r.bottom > hb) {
       // anchor on the deepest visible block inside an open row, so streaming above it does not move it
@@ -1608,18 +1908,17 @@ function render() {
   const anchorOn = !(S.follow && atTop);
   let anchor = null, top0 = 0;
   if (anchorOn) { anchor = findAnchor(); if (anchor) top0 = anchor.getBoundingClientRect().top; }
+  const touchedSecs = new Set();
   if (added.length) {
     $('#empty') && $('#empty').remove();
-    const frag = document.createDocumentFragment();
     let shown = 0;
-    for (let i = added.length - 1; i >= 0; i--) {
-      const ex = added[i];
+    for (const ex of added) {
       buildRow(ex); dirty.delete(ex);
       ex.row.hidden = !visible(ex);
-      if (!ex.row.hidden) shown++;
-      frag.append(ex.row);
+      placeRow(ex);
+      touchedSecs.add(ex.sec);
+      if (!ex.row.hidden && ex.sec.open) shown++;
     }
-    feed.prepend(frag);
     if (anchorOn) S.newCount += shown;
     added.length = 0;
   }
@@ -1633,9 +1932,13 @@ function render() {
     }
     ex.dirty_reply = ex.dirty_new = false;
     ex.row.hidden = !visible(ex);
+    if (ex.sec) { touchedSecs.add(ex.sec); ex.sec.chartsDirty = true; }
   }
   dirty.clear();
   if (filtersDirty) { filtersDirty = false; for (const ex of S.list) if (ex.row) ex.row.hidden = !visible(ex); }
+  for (const sec of touchedSecs) updateSecHeader(sec);
+  if (touchedSecs.size) orderSecs();
+  secVisibility();
   updateHeader();
   if (anchor && anchor.isConnected) {
     const d = anchor.getBoundingClientRect().top - top0;
@@ -1879,23 +2182,48 @@ function sessStats(sess) {
 function sessMatches(sess) { return !S.query || sessExchanges(sess).some(e => searchText(e).includes(S.query.toLowerCase())); }
 function dur(sec) { sec = Math.max(0, Math.round(sec)); return sec < 60 ? `${sec} s` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${(sec / 3600).toFixed(1)} h`; }
 function renderSessList() {
-  const rows = S.sessOrder.map(s => ({ s, st: sessStats(s) })).filter(x => sessExchanges(x.s).length).sort((a, b) => b.st.last - a.st.last);
+  // U64: one persistent card per session; only text/flags change, cards move only when the order changes
+  const rows = S.sessOrder.map(s2 => ({ s: s2, st: sessStats(s2) })).filter(x => sessExchanges(x.s).length).sort((x, y) => y.st.last - x.st.last);
   const shown = rows.filter(x => sessMatches(x.s));
   if (!C.sess || (!C.userPicked && rows.length && C.sess !== rows[0].s)) { C.sess = rows.length ? rows[0].s : null; C.chatDirty = true; }
   if (S.query && shown.length && !shown.some(x => x.s === C.sess)) { C.sess = shown[0].s; C.chatDirty = true; }
   C.order = shown.map(x => x.s);
-  CV.list.replaceChildren(...(shown.length ? shown.map(({ s, st }) => {
-    const card = h('div', { class: 'scardl' + (s === C.sess ? ' on' : ''), title: TIP.session },
-      h('div', { class: 'l1' }, h('b', null, s.name), st.active ? h('span', { class: 'gdot', title: 'a request in the last 60 s' }) : null, `${s.ts ? fmtTime(s.ts).slice(0, 5) : '--:--'} · ${dur(st.last - s.ts)}`),
-      h('div', { class: 'l2', dir: dirFor(s.prompt) }, s.prompt ? `"${firstLine(s.prompt, 80)}"` : h('span', { class: 'c-muted' }, '(no typed prompt)')),
-      h('div', { class: 'l3' }, `${st.prompts} prompt${st.prompts === 1 ? '' : 's'} · ${st.tools} tool${st.tools === 1 ? '' : 's'} · ${st.subs} subagent${st.subs === 1 ? '' : 's'}`,
-        costSpan(aggCost(sessExchanges(s)), { est: true, bg: true }),
-        st.inj ? badge(`⚠ ${st.inj}`, 'inj', TIP.inj) : null, st.perm ? badge(`🔒 ${st.perm}`, 'perm', TIP.perm) : null,
-        st.errs ? badge(`${st.errs} error${st.errs === 1 ? '' : 's'}`, 'red', 'main requests of this session that failed') : null));
-    card.style.setProperty('--sess', s.color);
-    card.addEventListener('click', () => selectSession(s));
-    return card;
-  }) : [h('div', { class: 'c-muted', style: 'padding:10px' }, S.query ? 'no session matches the search' : 'no sessions yet')]));
+  C.cards ||= new Map();
+  const want = [];
+  for (const { s: s2, st } of rows) {
+    let c = C.cards.get(s2);
+    if (!c) {
+      c = { name: h('b', null, s2.name), dot: h('span', { class: 'gdot', title: 'a request in the last 60 s', hidden: true }), time: document.createTextNode(''),
+        l2: h('div', { class: 'l2' }), counts: document.createTextNode(''), cost: costEl({ est: true, bg: true }),
+        inj: h('span', { class: 'badge inj', title: TIP.inj, hidden: true }), perm: h('span', { class: 'badge perm', title: TIP.perm, hidden: true }),
+        err: h('span', { class: 'badge red', title: 'main requests of this session that failed', hidden: true }), key: '' };
+      c.el = h('div', { class: 'scardl', title: TIP.session }, h('div', { class: 'l1' }, c.name, c.dot, c.time), c.l2, h('div', { class: 'l3' }, c.counts, c.cost, c.inj, c.perm, c.err));
+      c.el.style.setProperty('--sess', s2.color);
+      c.el.addEventListener('click', e => { if (e.target.closest('.cost')) return; selectSession(s2); });
+      C.cards.set(s2, c);
+    }
+    const a = aggCost(sessExchanges(s2));
+    const time = `${s2.ts ? fmtTime(s2.ts).slice(0, 5) : '--:--'} · ${dur(st.last - s2.ts)}`;
+    const counts = `${st.prompts} prompt${st.prompts === 1 ? '' : 's'} · ${st.tools} tool${st.tools === 1 ? '' : 's'} · ${st.subs} subagent${st.subs === 1 ? '' : 's'} `;
+    const key = [time, st.active, s2.prompt, counts, a.sent, a.recv, a.total, a.unpriced, st.inj, st.perm, st.errs].join('|');
+    if (key !== c.key) {
+      c.key = key;
+      c.time.nodeValue = time; c.dot.hidden = !st.active;
+      c.l2.dir = dirFor(s2.prompt); c.l2.textContent = s2.prompt ? `"${firstLine(s2.prompt, 80)}"` : '(no typed prompt)'; c.l2.classList.toggle('c-muted', !s2.prompt);
+      c.counts.nodeValue = counts; c.cost.set(a);
+      c.inj.hidden = !st.inj; c.inj.textContent = `⚠ ${st.inj}`;
+      c.perm.hidden = !st.perm; c.perm.textContent = `🔒 ${st.perm}`;
+      c.err.hidden = !st.errs; c.err.textContent = `${st.errs} error${st.errs === 1 ? '' : 's'}`;
+    }
+    c.el.classList.toggle('on', s2 === C.sess);
+    c.el.hidden = !shown.some(x => x.s === s2);
+    want.push(c.el);
+  }
+  if (!C.emptyEl) C.emptyEl = h('div', { class: 'c-muted', style: 'padding:10px' });
+  C.emptyEl.textContent = S.query ? 'no session matches the search' : 'no sessions yet';
+  C.emptyEl.hidden = shown.length > 0;
+  want.push(C.emptyEl);
+  want.forEach((el, i) => { if (CV.list.children[i] !== el) CV.list.insertBefore(el, CV.list.children[i] || null); });
 }
 function selectSession(s) { C.sess = s; C.userPicked = true; C.listDirty = C.chatDirty = true; schedule(); }
 function renderConv() {
@@ -1909,6 +2237,7 @@ function setView(v, noHash) {
   $('#v-traffic').classList.toggle('on', C.view === 'traffic');
   if (!noHash) try { history.replaceState(null, '', '#' + C.view); } catch (e) { location.hash = C.view; }
   sizeConv();
+  if (C.view === 'traffic') for (const sec of T.secs.values()) { sec.chartsDirty = true; drawCharts(sec); }
   C.listDirty = C.chatDirty = true; schedule();
 }
 function sizeConv() { document.documentElement.style.setProperty('--hh', $('#hdr').getBoundingClientRect().height + 'px'); }
@@ -2020,7 +2349,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'j' || e.key === 'k' || e.key === 'Enter') {
-    const rows = [...feed.children].filter(r => r.classList.contains('row') && !r.hidden);
+    const rows = [...feed.querySelectorAll('.row')].filter(r => r.offsetParent);
     if (!rows.length) return;
     let i = rows.findIndex(r => r.classList.contains('sel'));
     if (e.key === 'Enter') { if (i >= 0) { const ex = S.ex.get(rows[i].dataset.id); toggleExpand(ex); } return; }
@@ -2039,8 +2368,9 @@ $('#costpop').addEventListener('mouseleave', () => { if (!popPinned) $('#costpop
 function resetAll() {
   S.ex.clear(); S.list.length = 0; S.seq = 0; S.sessions.clear(); S.sessOrder.length = 0; S.subByCall.clear(); lastSessKey = ''; S.calls.clear(); S.results.clear(); S.msgIds.clear(); S.newCount = 0;
   added.length = 0; dirty.clear();
-  feed.replaceChildren(h('div', { class: 'empty', id: 'empty' }, 'The log was reset. Waiting for traffic…'));
-  C.sess = null; C.userPicked = false; C.open.clear(); C.listDirty = C.chatDirty = true;
+  T.secs.clear(); secsEl.replaceChildren();
+  feed.prepend(h('div', { class: 'empty', id: 'empty' }, 'The log was reset. Waiting for traffic…'));
+  C.sess = null; C.userPicked = false; C.open.clear(); C.listDirty = C.chatDirty = true; if (C.cards) { C.cards.clear(); CV.list.replaceChildren(); }
   lastToolKey = lastModelKey = '';
   schedule();
 }
