@@ -1,6 +1,8 @@
 # SPEC: Live Traffic Dashboard for the Agent Proxy
 
-Status: **v1, ready to build.** Decisions are in section 9. Priorities: **[M]** must
+Status: **v2, ready to build.** v2 adds what build 1 showed on live traffic:
+suggestion requests, background errors, message normalization, badge help, and
+system messages inside the conversation. Decisions are in section 9. Priorities: **[M]** must
 be in the first build, **[S]** should, **[C]** could (later iterations).
 
 ## 1. Purpose
@@ -35,6 +37,19 @@ and must be able to follow the conversation as it grows, request after request.
 - Claude Code moves `cache_control` markers between messages from one request to the
   next, so an older message can differ only in that field.
 - The `authorization` header holds a subscription token (`Bearer sk-ant-oat...`).
+- **The same message changes shape between requests.** Message content can be a plain
+  string in one request and a list of blocks (with `cache_control`) in the next.
+  Comparing messages as they arrive fails, so every request looks like a new thread.
+- **`role: "system"` messages appear inside `messages`**, between user and assistant
+  turns, besides the top-level `system` field. They carry environment info and
+  `tool_addition` blocks of the form
+  `{"type": "tool_addition", "tool": {"type": "tool_definition", "definition": {"name": "Read", ...}}}`.
+- **Suggestion requests.** After the model answers, Claude Code sends a request (with
+  tools, in the same thread) whose last user message starts with
+  `[SUGGESTION MODE: Suggest what the user might naturally type next`. It fills the
+  gray hint in the input box. The user did not type it.
+- At startup Claude Code sends a small request whose only message is `quota` (no
+  tools). It can get `429 rate_limit_error` while everything the user does still works.
 
 ## 3. Components and files
 
@@ -120,8 +135,12 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 ### 6.2 Kinds of requests
 
 - U5 [M] A request is **main** when it is `POST`, its path starts with `/v1/messages`
-  (but not `/v1/messages/count_tokens`), and its body has a non-empty `tools` list.
-  Everything else is **background**.
+  (but not `/v1/messages/count_tokens`), its body has a non-empty `tools` list, and it
+  is not a suggestion request (U38). Everything else is **background**.
+- U38 [M] **Suggestion request**: the text of the last `user` message (after
+  normalization, U8) starts with `[SUGGESTION MODE`. It is background, its row has
+  the gray label **suggestion**, and its `→` preview is `suggestion request`, never
+  `You: "…"`. It still takes part in threads (U8) like any other request.
 - U6 [M] Background requests are shown by default, in a smaller, muted row. A toggle in
   the header hides them and shows "N background hidden".
 
@@ -129,14 +148,18 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 
 - U7 [M] **Session** = value of `X-Claude-Code-Session-Id` (missing: "no session").
 - U8 [M] **Thread** = a chain of requests in one session where each request's
-  `messages` starts with the previous one's `messages`. To compare, remove every
-  `cache_control` field first. The parent of a new request is the latest request in
+  `messages` starts with the previous one's `messages`. **Normalize before comparing**
+  (U39). The parent of a new request is the latest request in
   the same session whose messages are a prefix of its messages.
 - U9 [M] If no parent is found, the request starts a **new thread** (a subagent, a
   compaction, or a new conversation). It gets the badge "new thread". Threads are
   named `T1`, `T2`, ... per session, and the name shows on every row.
 - U10 [M] **New messages** of a request = its messages after the parent's messages.
   For the first request of a thread, all of them.
+- U39 [M] **Normalization**, used for every comparison and every display decision: a
+  message's content that is a string becomes one block `{"type": "text", "text": …}`;
+  then every `cache_control` field is removed (at any depth). Compare messages by
+  `role` + normalized content (for example as canonical JSON strings).
 
 ### 6.4 Page layout
 
@@ -168,6 +191,15 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 - U14 [M] New rows do not push the view down while the user reads: if the page is
   scrolled away from the top, show a "N new ↑" pill instead; clicking it goes to the
   top. "follow live" (on by default) keeps the newest row in view.
+- U40 [M] **Every badge explains itself.** Each badge and header item has a tooltip
+  (`title`) in plain words, for example: `T1` "thread 1: one conversation; a new
+  thread is a subagent, compaction or new chat", `+2 msgs` "2 messages added since
+  the previous request in this thread", `end_turn` "the model finished its answer",
+  `tool_use` "the model stopped to ask for a tool", `cache r` "input tokens read from
+  the prompt cache", `bg` "sent by Claude Code itself, not by you".
+- U41 [M] A **?** button in the header opens a small legend panel: the four colors
+  (You, Model, tool call, tool result), every badge with its meaning (same text as
+  U40), and what `→` and `←` mean. Esc or a second click closes it.
 
 ### 6.5 Expanded exchange: sections, in this order
 
@@ -192,6 +224,8 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 | `thinking`                    | Muted italic, label **thinking**, collapsed                  |
 | `tool_use`                    | Amber card: `ToolName` + short summary + input JSON          |
 | `tool_result`                 | Green card, red when `is_error`; shows the tool name of its call |
+| `role: "system"` message      | Gray bubble, label **System message**, collapsed to its first line; never labeled **You** or **Model** |
+| `tool_addition` block         | One small chip `+ tool: <name>` (name from `tool.definition.name`); full JSON when clicked |
 | Image / document              | Gray placeholder with type and size                          |
 | Unknown                       | Raw JSON                                                     |
 
@@ -220,7 +254,10 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 - U20 [M] A `tool_result` with `is_error: true` is a red card, and its row gets a
   small red dot (the exchange itself is not counted as an error).
 - U21 [S] `stop_reason: max_tokens` gets a yellow warning badge.
-- U22 [M] The header shows the error count; clicking it turns on "errors only".
+- U22 [M] The header shows two counts: **errors** (main requests only, red) and
+  **bg errors** (background requests, gray). Clicking either turns on "errors only".
+  A background error row is still marked red in the feed, but it never raises the red
+  count. Example: the startup `quota` request getting 429 adds to "bg errors" only.
 
 ### 6.9 Stats
 
@@ -293,6 +330,18 @@ Run section 3's three commands. Then, in the Claude terminal:
 - A14 [M] The header token totals equal the sum of the rows.
 - A15 [M] After 100+ exchanges, scrolling is smooth and a row opens in under 200 ms.
 - A16 [M] Switching the system to dark mode switches the page.
+- A17 [M] After the model answers, the `[SUGGESTION MODE…` request appears as a muted
+  row labeled **suggestion**; no row shows it as `You:`. "hide background" hides it.
+- A18 [M] Start `claude` fresh. If the `quota` request gets 429, "bg errors" goes up
+  and the red "errors" count stays 0.
+- A19 [M] Send two prompts in one session: the second prompt's requests are in the
+  same thread (`T1`), with no "new thread" badge, although Claude Code changed the
+  shape of earlier messages between requests.
+- A20 [M] Hovering `T1`, `+N msgs`, `end_turn`, `tool_use`, and `bg` shows a tooltip;
+  the **?** button opens the legend and Esc closes it.
+- A21 [M] In "New in this request" of the first main request, the environment message
+  is a gray **System message** (not **You**), and its `tool_addition` blocks show as
+  `+ tool: <name>` chips.
 
 ## 9. Decisions
 
@@ -310,10 +359,14 @@ Run section 3's three commands. Then, in the Claude terminal:
 | D10 | Unpaired items     | "no result yet" and "orphan result" badges; nothing hidden.               |
 | D11 | Tech stack         | One HTML file with inline CSS/JS; Python standard library only.           |
 | D12 | Conversations      | Session = `X-Claude-Code-Session-Id`; thread = message-prefix chain (6.3). |
-| D13 | Background rule    | Main = POST to `/v1/messages` with tools; everything else background.     |
+| D13 | Background rule    | Main = POST to `/v1/messages` with tools, not a suggestion request; everything else background. |
 | D14 | Parsing location   | In the browser only, so live and reloaded data use the same code.        |
 | D15 | Persistence        | The log is appended across restarts; deleting it resets the view (S5).    |
 | D16 | Section order      | New messages and reply first; system and tools collapsed below.          |
+| D17 | Suggestion requests | Background with a **suggestion** label (U38), because the user did not type them. |
+| D18 | Background errors  | Counted apart as "bg errors" (U22), so a failed startup probe does not look like a broken session. |
+| D19 | Normalization      | String content → one text block, `cache_control` removed, before any comparison (U39). |
+| D20 | Badge help         | Tooltips on every badge plus a **?** legend (U40, U41); build 1 showed that the badges alone were not understood. |
 
 ## 10. Instructions for the agent that builds this
 
@@ -327,5 +380,6 @@ Run section 3's three commands. Then, in the Claude terminal:
   `python3 proxy.py --port 8141 --log test.jsonl`,
   `python3 dashboard.py --port 8150 --log test.jsonl`,
   `ANTHROPIC_BASE_URL=http://localhost:8141 claude -p "read proxy.py and summarize it"`.
-  Then check the parsed result against acceptance checks A2–A6, A12, and A14, and
+  Then check the parsed result against acceptance checks A2–A6, A12, A14, A17,
+  A19, and A21, and
   report which checks pass and which you could not check.
