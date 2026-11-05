@@ -69,3 +69,27 @@ Files: `proxy.py` (logging added), `dashboard.py` (server), `dashboard.html` (wh
 4. Background rule (U5): decide whether errors in background requests count in the
    header error count (they do now).
 5. Markdown tables in model replies are shown as plain text; decide if they matter.
+
+## Build 2: dashboard.html updated to SPEC.md v3
+
+Changes in `dashboard.html` only (proxy and server untouched):
+
+- U38/U5: suggestion requests (`[SUGGESTION MODE…` in the last user message) are background, with a
+  gray **suggestion** badge and the preview `suggestion request`. They still join threads (`threaded`
+  vs `main` in the code).
+- U42: user-role text in a background request is an **Auto** block / `Auto: "…"` preview, never **You**.
+- U43: **You** bubbles right, **Model** left (max 85%); cards, Auto, reminders, system messages full width.
+- U44: "user traffic only" toggle plus an "N hidden" count.
+- U30: text blocks show their first 80 characters with a ▸/▾ chevron; a search match opens a block on its own.
+- U45: empty exchanges (e.g. `HEAD /api/hello` 404) are a single header line; background rows show method + path there.
+- U22: "errors" counts main requests only; new "bg errors" count for background requests.
+- U40/U41: tooltips on every badge and header item, and a **?** legend panel (Esc closes).
+- 6.6: `role: "system"` messages are a gray **System message**; `tool_addition` blocks are `+ tool: <name>` chips.
+
+Choices where the spec was silent:
+
+- Text already inside a collapsed container (reminders, system message, thinking, tool descriptions, raw)
+  skips the 80-character step but keeps the 15-line cut.
+- "Typed prompt" for U44 = the last user message of the new messages has non-reminder text.
+- Tested by replaying a real `traffic.jsonl` (123 records, 9 requests) in headless Chrome: no console errors.
+  Not run: A8 and the long-session checks (A15) on the new build.

@@ -1,9 +1,11 @@
 # SPEC: Live Traffic Dashboard for the Agent Proxy
 
-Status: **v2, ready to build.** v2 adds what build 1 showed on live traffic:
-suggestion requests, background errors, message normalization, badge help, and
-system messages inside the conversation. Decisions are in section 9. Priorities: **[M]** must
-be in the first build, **[S]** should, **[C]** could (later iterations).
+Status: **v3, ready to build.** v3 adds an **Auto** label for prompts Claude Code
+writes itself, chat alignment, a "user traffic only" toggle, short collapsible
+blocks, and thin rows for empty exchanges. v2 added what build 1 showed on live
+traffic: suggestion requests, background errors, message normalization, badge help,
+and system messages inside the conversation. Decisions are in section 9. Priorities:
+**[M]** must be in the first build, **[S]** should, **[C]** could (later iterations).
 
 ## 1. Purpose
 
@@ -141,8 +143,14 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
   normalization, U8) starts with `[SUGGESTION MODE`. It is background, its row has
   the gray label **suggestion**, and its `→` preview is `suggestion request`, never
   `You: "…"`. It still takes part in threads (U8) like any other request.
+- U42 [M] **Automated prompt**: user-role text in a background request, for example
+  a suggestion request (U38), a thread-title request, or the startup `quota` request.
+  Claude Code wrote it, not the user. It is labeled **Auto**, never **You**, in
+  previews and in sections. Its `→` preview is `Auto: "…"`; suggestion requests keep
+  `suggestion request`.
 - U6 [M] Background requests are shown by default, in a smaller, muted row. A toggle in
   the header hides them and shows "N background hidden".
+
 
 ### 6.3 Sessions and threads
 
@@ -165,9 +173,9 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 
 ```
 ┌ Header ────────────────────────────────────────────────────────────────────┐
-│ ● live   42 requests (8 bg)   in 310k  out 9k  cache r 280k w 30k          │
+│ ● live   42 requests (8 bg)   in 310k  out 9k  cache r 280k w 30k      [?] │
 │ errors 1   tools: Read 6 · Bash 3 · Edit 2   [search ] [tool▾] [model▾]     │
-│ [errors only] [hide background] [follow live] [theme]                      │
+│ [errors only] [hide background] [user traffic only] [follow live] [theme]  │
 ├ Feed (newest first) ───────────────────────────────────────────────────────┤
 │ 13:54:43  #12  T1  opus-5-5  200  3.1s  in 31k / out 120   [tool_use]      │
 │   → ↩ Read result (34 lines)                                               │
@@ -175,17 +183,23 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 │ 13:54:40  #11  T1  opus-5-5  200  2.4s  …                  [end_turn]      │
 │   → You: "read proxy.py and tell me what it does"                          │
 │   ← Model: "It is a reverse proxy that …"                                  │
+│ 13:54:38  #10  HEAD /api/hello  404  0.1s  bg                              │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - U11 [M] One row per exchange, newest on top. Collapsed row shows: time, sequence
   number, thread, short model name, status, duration, input/output tokens,
   `stop_reason` badge, change markers (6.7), and **two preview lines**:
-  - `→` what is new in the request: the user's prompt (`You: "…"`), or tool results
-    (`↩ Read result (34 lines)`), never a system-reminder;
+  - `→` what is new in the request: the user's prompt (`You: "…"`), an automated
+    prompt (`Auto: "…"`, U42), or tool results (`↩ Read result (34 lines)`), never a
+    system-reminder;
   - `←` the reply: first line of model text, or the tool calls (`Read(file_path=…)`).
 - U12 [M] A request still waiting shows a spinner and "in progress"; the `←` line
   and the open reply fill in while the reply streams.
+- U45 [M] **Empty rows stay thin.** When an exchange has no request messages and no
+  model text or tool calls in the reply (for example a 404 to `HEAD /api/hello`), the
+  row shows only its header line, with no `→`/`←` lines. Error marking (U19) still
+  applies. Expanded, its empty sections are left out; **Raw** is always shown.
 - U13 [M] Click a row to expand it. Expanding never moves the scroll position and
   never closes other rows. Expanded rows stay expanded when new rows arrive.
 - U14 [M] New rows do not push the view down while the user reads: if the page is
@@ -196,10 +210,12 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
   thread is a subagent, compaction or new chat", `+2 msgs` "2 messages added since
   the previous request in this thread", `end_turn` "the model finished its answer",
   `tool_use` "the model stopped to ask for a tool", `cache r` "input tokens read from
-  the prompt cache", `bg` "sent by Claude Code itself, not by you".
-- U41 [M] A **?** button in the header opens a small legend panel: the four colors
-  (You, Model, tool call, tool result), every badge with its meaning (same text as
-  U40), and what `→` and `←` mean. Esc or a second click closes it.
+  the prompt cache", `bg` "sent by Claude Code itself, not by you", `Auto` "text
+  Claude Code wrote itself, not you", `user traffic only` "show only requests that
+  carry a prompt you typed".
+- U41 [M] A **?** button in the header opens a small legend panel: the five colors
+  (You, Auto, Model, tool call, tool result), every badge with its meaning (same text
+  as U40), and what `→` and `←` mean. Esc or a second click closes it.
 
 ### 6.5 Expanded exchange: sections, in this order
 
@@ -218,13 +234,14 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 
 | Block                         | Look                                                         |
 |-------------------------------|--------------------------------------------------------------|
-| User prompt (typed text)      | Blue bubble, label **You**                                   |
+| User prompt (typed text)      | Blue bubble, label **You**, aligned right                    |
+| Automated prompt (U42)        | Gray background, muted text, label **Auto**, full width      |
 | `<system-reminder>` text      | Gray, dashed border, label **reminder**, collapsed to one line |
-| Model text                    | Neutral bubble, label **Model**, basic markdown              |
+| Model text                    | Neutral bubble, label **Model**, aligned left, basic markdown |
 | `thinking`                    | Muted italic, label **thinking**, collapsed                  |
 | `tool_use`                    | Amber card: `ToolName` + short summary + input JSON          |
 | `tool_result`                 | Green card, red when `is_error`; shows the tool name of its call |
-| `role: "system"` message      | Gray bubble, label **System message**, collapsed to its first line; never labeled **You** or **Model** |
+| `role: "system"` message      | Gray bubble, label **System message**, collapsed to its first line; never labeled **You**, **Auto** or **Model** |
 | `tool_addition` block         | One small chip `+ tool: <name>` (name from `tool.definition.name`); full JSON when clicked |
 | Image / document              | Gray placeholder with type and size                          |
 | Unknown                       | Raw JSON                                                     |
@@ -232,8 +249,13 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 - U15 [M] Short summary for common tools: `Read`/`Write`/`Edit` show the file path,
   `Bash` shows the command, `Grep`/`Glob` show the pattern. Other tools: the first
   input field. The full input is always below the summary.
-- U16 [M] The four main kinds (prompt, model text, tool call, tool result) use the
-  same color and label everywhere: in previews, in sections, in the header.
+- U16 [M] The five main kinds (prompt, automated prompt, model text, tool call, tool
+  result) use the same color and label everywhere: in previews, in sections, in the
+  header. Automated prompts and background rows are grayed so typed prompts stand out.
+- U43 [M] **Chat alignment.** **You** bubbles sit on the right and **Model** bubbles
+  on the left, each at most 85% of the width. Tool cards, **Auto**, reminders, and
+  system messages use the full width. Collapsed-row previews are not aligned. U36
+  still holds.
 
 ### 6.7 Tool pairing and changes
 
@@ -270,7 +292,12 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 ### 6.10 Filters and search
 
 - U26 [M] Tool filter: show only exchanges with a call or result of that tool.
-- U27 [M] Model filter, "errors only", "hide background". Filters combine (AND).
+- U27 [M] Model filter, "errors only", "hide background", "user traffic only".
+  Filters combine (AND).
+- U44 [M] **User traffic only** toggle, next to "hide background": shows only main
+  exchanges whose new messages (U10) contain a typed prompt, that is, rows whose `→`
+  line is `You: "…"`. It hides all background requests and the tool-loop requests
+  that only carry tool results. The header shows "N hidden" while it is on.
 - U28 [M] Search box: case-insensitive, over prompts, model text, tool inputs, and
   tool results (not system or tool definitions). Non-matching rows hide; matches are
   highlighted in opened sections.
@@ -278,7 +305,11 @@ ANTHROPIC_BASE_URL=http://localhost:8041 claude
 
 ### 6.11 Formatting
 
-- U30 [M] Text longer than 15 lines is cut with "show more (N lines)".
+- U30 [M] Every text block (prompt, Auto, model text, tool input, tool result) shows
+  only its first 80 characters, with a chevron (▸/▾) to expand or collapse the full
+  text. Blocks the 6.6 table already collapses keep their own rule. An expanded block
+  longer than 15 lines is cut with "show more (N lines)". A block with a search match
+  (U28) opens on its own. The copy button (U34) always copies the full text.
 - U31 [M] JSON is indented, colored (keys, strings, numbers), and each object/array
   can fold. Long strings in JSON are cut with "show more".
 - U32 [M] Monospace for code, tool input, tool output, JSON. Proportional font for
@@ -342,6 +373,15 @@ Run section 3's three commands. Then, in the Claude terminal:
 - A21 [M] In "New in this request" of the first main request, the environment message
   is a gray **System message** (not **You**), and its `tool_addition` blocks show as
   `+ tool: <name>` chips.
+- A22 [M] The suggestion request and any thread-title request show their text as a
+  gray **Auto** block; no row or section shows it as **You**.
+- A23 [M] In an expanded exchange, **You** bubbles are on the right and **Model**
+  bubbles on the left; tool cards use the full width.
+- A24 [M] "User traffic only" leaves only rows whose `→` line is `You: "…"`; the
+  `HEAD /api/hello` row, suggestion rows, and tool-result rows are hidden.
+- A25 [M] A long model reply shows its first 80 characters and a chevron; clicking
+  the chevron shows the full text.
+- A26 [M] The `HEAD /api/hello` 404 row is a single header line with no `→`/`←` lines.
 
 ## 9. Decisions
 
@@ -367,6 +407,11 @@ Run section 3's three commands. Then, in the Claude terminal:
 | D18 | Background errors  | Counted apart as "bg errors" (U22), so a failed startup probe does not look like a broken session. |
 | D19 | Normalization      | String content → one text block, `cache_control` removed, before any comparison (U39). |
 | D20 | Badge help         | Tooltips on every badge plus a **?** legend (U40, U41); build 1 showed that the badges alone were not understood. |
+| D21 | Automated prompts  | Labeled **Auto**, grayed, never **You** (U42). Not "System", which already names system messages and system instructions. |
+| D22 | Chat alignment     | You right, Model left; cards and Auto full width (U43).                   |
+| D23 | User traffic only  | Shows only exchanges with a typed prompt, so it does more than "hide background" (U44). |
+| D24 | Block length       | 80 characters by default with a chevron; the 15-line cut applies once expanded (U30). |
+| D25 | Empty rows         | Header line only, no previews (U45).                                      |
 
 ## 10. Instructions for the agent that builds this
 
@@ -380,6 +425,6 @@ Run section 3's three commands. Then, in the Claude terminal:
   `python3 proxy.py --port 8141 --log test.jsonl`,
   `python3 dashboard.py --port 8150 --log test.jsonl`,
   `ANTHROPIC_BASE_URL=http://localhost:8141 claude -p "read proxy.py and summarize it"`.
-  Then check the parsed result against acceptance checks A2–A6, A12, A14, A17,
-  A19, and A21, and
+    Then check the parsed result against acceptance checks A2–A6, A12, A14, A17,
+  A19, A21, A22, A24, and A26, and
   report which checks pass and which you could not check.

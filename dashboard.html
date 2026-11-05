@@ -145,6 +145,33 @@ details[open] > summary::before { transform: rotate(90deg); }
 .blk.rem > summary { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .blk.think { background: var(--panel2); color: var(--muted); font-style: italic; padding: 3px 9px; }
 .blk.ph { background: var(--panel2); color: var(--muted); }
+/* chat alignment (U43): You on the right, Model on the left; everything else full width */
+.blk.you { align-self: flex-end; max-width: 85%; }
+.blk.model { align-self: flex-start; max-width: 85%; }
+/* automated prompts (U42) and system messages */
+.blk.auto { background: var(--rem-bg); color: var(--rem); border-color: var(--line); }
+.blk.auto .lbl { color: var(--rem); }
+.blk.sysmsg { background: var(--rem-bg); color: var(--rem); border-color: var(--line); padding: 3px 9px; }
+.blk.sysmsg > summary { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tadd { align-self: flex-start; border: 1px solid var(--line); background: var(--panel2); border-radius: 999px; padding: 0 9px;
+  font: 12.5px var(--mono); color: var(--muted); max-width: 100%; }
+.tadd[open] { align-self: stretch; border-radius: 6px; padding: 2px 9px 6px; }
+.tadd > summary::before { display: none; }
+/* collapsible text (U30) */
+.ctext { cursor: pointer; display: flex; gap: 4px; align-items: baseline; }
+.ctext .chev { color: var(--muted); width: 12px; flex: none; }
+.ctext .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.row.thin .head { padding: 3px 10px; }
+.row.thin .meta { font-size: 12px; }
+.badge.sug { color: var(--rem); background: var(--rem-bg); border-style: dashed; }
+.badge.auto { color: var(--rem); background: var(--rem-bg); }
+.k-auto { color: var(--rem); }
+/* legend panel (U41) */
+#help { position: fixed; top: 54px; right: 16px; z-index: 30; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+#help h2 { font-size: 13px; margin: 8px 0 4px; }
+#help dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; font-size: 13px; align-items: baseline; }
+#help dd { margin: 0; color: var(--muted); }
 .sum { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
 .link { color: var(--you); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font-size: 12.5px; }
 .paired { margin-top: 6px; border-radius: 6px; padding: 5px 8px; background: var(--res-bg); border: 1px solid var(--res-line); }
@@ -196,16 +223,19 @@ details[open] > summary::before { transform: rotate(90deg); }
   <div class="hrow">
     <h1>Agent Traffic</h1>
     <span class="live" id="live"><span class="dot"></span><span id="livetxt">connecting…</span></span>
-    <span class="stat"><b id="nreq">0</b> requests (<span id="nbg">0</span> bg)</span>
-    <span class="stat">in <b id="tin">0</b></span>
-    <span class="stat">out <b id="tout">0</b></span>
-    <span class="stat">cache r <b id="tcr">0</b> w <b id="tcw">0</b></span>
-    <button class="errcount stat" id="errbtn" title="Show errors only">errors <b id="nerr">0</b></button>
+    <span class="stat" title="all requests seen; bg = background requests sent by Claude Code itself"><b id="nreq">0</b> requests (<span id="nbg">0</span> bg)</span>
+    <span class="stat" title="input tokens: fresh + cache read + cache write"><span>in</span> <b id="tin">0</b></span>
+    <span class="stat" title="output tokens the model wrote">out <b id="tout">0</b></span>
+    <span class="stat" title="cache r: input tokens read from the prompt cache; w: input tokens written to the cache">cache r <b id="tcr">0</b> w <b id="tcw">0</b></span>
+    <button class="errcount stat" id="errbtn" title="Failed main requests (your conversation). Click to show errors only.">errors <b id="nerr">0</b></button>
+    <button class="errcount stat" id="bgerrbtn" title="Failed background requests (sent by Claude Code itself, e.g. the startup quota check). Click to show errors only.">bg errors <b id="nbgerr">0</b></button>
     <span class="legend">
-      <span style="--c: var(--you)">You</span><span style="--c: var(--model)">Model</span>
-      <span style="--c: var(--call)">tool call</span><span style="--c: var(--res)">tool result</span>
-      <span style="--c: var(--err)">error</span>
+      <span style="--c: var(--you)" title="text you typed">You</span><span style="--c: var(--rem)" title="text Claude Code wrote itself, not you">Auto</span>
+      <span style="--c: var(--model)" title="text the model wrote">Model</span>
+      <span style="--c: var(--call)" title="the model asked for a tool">tool call</span><span style="--c: var(--res)" title="what the tool returned">tool result</span>
+      <span style="--c: var(--err)" title="something failed">error</span>
     </span>
+    <button class="btn" id="helpbtn" title="Explain the colors and badges">?</button>
   </div>
   <div class="hrow"><span class="stat">tools:</span><div class="chips" id="toolchips"><span class="stat">none yet</span></div></div>
   <div class="hrow controls">
@@ -213,12 +243,15 @@ details[open] > summary::before { transform: rotate(90deg); }
     <select id="ftool"><option value="">all tools</option></select>
     <select id="fmodel"><option value="">all models</option></select>
     <label><input type="checkbox" id="ferr"> errors only</label>
-    <label><input type="checkbox" id="fbg"> hide background</label>
+    <label title="hide requests sent by Claude Code itself"><input type="checkbox" id="fbg"> hide background</label>
     <span class="stat" id="bghidden"></span>
+    <label title="show only requests that carry a prompt you typed"><input type="checkbox" id="fuser"> user traffic only</label>
+    <span class="stat" id="userhidden"></span>
     <label><input type="checkbox" id="follow" checked> follow live</label>
     <button class="btn" id="theme" title="Theme">theme: auto</button>
   </div>
 </header>
+<div id="help" class="hide" role="dialog" aria-label="Legend"></div>
 <button id="newpill"></button>
 <main id="feed"><div class="empty" id="empty">Waiting for traffic… run <code>ANTHROPIC_BASE_URL=http://localhost:8041 claude</code></div></main>
 
@@ -294,7 +327,7 @@ const S = {
   results: new Map(),   // tool_use id -> {ex, block}
   sessions: new Map(),  // session id -> {n: thread counter}
   dirty: new Set(), raf: 0, headerDirty: true,
-  f: { tool: '', model: '', errors: false, hideBg: false, q: '' },
+  f: { tool: '', model: '', errors: false, hideBg: false, userOnly: false, q: '' },
   newCount: 0, focus: null,
 };
 const openState = new Map();     // details key -> open?
@@ -343,10 +376,15 @@ function onReq(r) {
     reply: { content: [], usage: {}, stop: null, model: null, id: null, stopped: false, unknown: [] },
     model: (b && b.model) || '', sid: hdr(r.headers, 'x-claude-code-session-id') || '',
     msgs: b && Array.isArray(b.messages) ? b.messages : [],
-    main: r.method === 'POST' && /^\/v1\/messages(\?|$)/.test(r.path || '') && !!b && Array.isArray(b.tools) && b.tools.length > 0,
+    // threaded = a /v1/messages call with tools: it takes part in threads (U8).
+    threaded: r.method === 'POST' && /^\/v1\/messages(\?|$)/.test(r.path || '') && !!b && Array.isArray(b.tools) && b.tools.length > 0,
     parent: null, thread: '', newFrom: 0, row: null, expanded: false,
   };
-  if (ex.main) {
+  // U38: a suggestion request is background, because the user did not type it.
+  ex.suggestion = ex.threaded && isSuggestion(ex.msgs);
+  // U5: main = threaded and not a suggestion request.
+  ex.main = ex.threaded && !ex.suggestion;
+  if (ex.threaded) {
     // The same message can come as a string in one request and as a block list in the next.
     ex.keys = ex.msgs.map(m => JSON.stringify(stripCC({ role: m.role, content: blocks(m) })));
     ex.sysKey = JSON.stringify(stripCC(b.system ?? null));
@@ -355,7 +393,7 @@ function onReq(r) {
     let parent = null;
     for (let i = S.order.length - 1; i >= 0; i--) {
       const p = S.ex.get(S.order[i]);
-      if (!p.main || p.sid !== ex.sid || p.keys.length > ex.keys.length) continue;
+      if (!p.threaded || p.sid !== ex.sid || p.keys.length > ex.keys.length) continue;
       if (p.keys.every((k, j) => k === ex.keys[j])) { parent = p; break; }
     }
     if (!S.sessions.has(ex.sid)) S.sessions.set(ex.sid, { n: 0 });
@@ -373,11 +411,16 @@ function onReq(r) {
   }
   ex.newMsgs = ex.msgs.slice(ex.newFrom);
   S.ex.set(ex.id, ex); S.order.push(ex.id);
-  if (ex.main) ex.newMsgs.forEach(m => blocks(m).forEach(bl => {
+  if (ex.threaded) ex.newMsgs.forEach(m => blocks(m).forEach(bl => {
     if (bl.type === 'tool_use' && bl.id && !S.calls.has(bl.id)) { S.calls.set(bl.id, { ex: ex.id, where: 'new', name: bl.name, input: bl.input }); pairDirty(bl.id); }
     if (bl.type === 'tool_result' && bl.tool_use_id && !S.results.has(bl.tool_use_id)) { S.results.set(bl.tool_use_id, { ex: ex.id, block: bl }); pairDirty(bl.tool_use_id); }
   }));
   mark(ex);
+}
+// Text of the last user message, normalized (string -> text block), starts with the suggestion marker.
+function isSuggestion(msgs) {
+  const last = [...msgs].reverse().find(m => m.role === 'user');
+  return !!last && blocks(last).some(bl => bl && bl.type === 'text' && String(bl.text).trimStart().startsWith('[SUGGESTION MODE'));
 }
 function pairDirty(id) {
   const c = S.calls.get(id), r = S.results.get(id);
@@ -427,7 +470,7 @@ function onSSE(ex, raw) {
 }
 function registerReplyCall(ex, bl) {
   if (!bl.id) return;
-  if (ex.main || !S.calls.has(bl.id)) S.calls.set(bl.id, { ex: ex.id, where: 'reply', name: bl.name, input: bl.input });
+  if (ex.threaded || !S.calls.has(bl.id)) S.calls.set(bl.id, { ex: ex.id, where: 'reply', name: bl.name, input: bl.input });
   pairDirty(bl.id);
 }
 function onPlainBody(ex) {
@@ -468,15 +511,27 @@ function searchText(ex) {
     else if (bl.type === 'tool_result') parts.push(resultText(bl));
     else if (bl.type === 'thinking') parts.push(bl.thinking || '');
   };
-  ex.newMsgs.forEach(m => blocks(m).forEach(add));
+  ex.newMsgs.forEach(m => { if (m.role !== 'system') blocks(m).forEach(add); });  // U28: not system messages
   ex.reply.content.forEach(add);
   if (!ex.main) parts.push(ex.req.method + ' ' + ex.req.path);
   const e = errorReason(ex); if (e) parts.push(e);
   return ex._text = parts.join('\n').toLowerCase();
 }
+// U44: a main exchange whose new messages hold a prompt the user typed (its `→` line is `You: "…"`).
+function hasTypedPrompt(ex) {
+  if (!ex.main) return false;
+  const user = [...ex.newMsgs].reverse().find(m => m.role === 'user');
+  return !!user && blocks(user).some(bl => bl && bl.type === 'text' && splitReminders(bl.text).prompt);
+}
+// U45: nothing to show besides the header line (e.g. the 404 to HEAD /api/hello).
+function isThin(ex) {
+  return !ex.threaded && ex.ended && !ex.msgs.length &&
+    !ex.reply.content.some(bl => bl && ((bl.type === 'text' && bl.text && bl.text.trim()) || bl.type === 'tool_use'));
+}
 function visible(ex) {
   const f = S.f;
   if (f.hideBg && !ex.main) return false;
+  if (f.userOnly && !hasTypedPrompt(ex)) return false;
   if (f.errors && !errorReason(ex) && !hasToolError(ex)) return false;
   if (f.model && (ex.model || ex.reply.model) !== f.model) return false;
   if (f.tool && !toolSet(ex).has(f.tool)) return false;
@@ -486,19 +541,42 @@ function visible(ex) {
 const usage = ex => ex.reply.usage || {};
 
 // ---------- row header ----------
+// U40: every badge explains itself.
+const TIP = {
+  thread: 'thread: one conversation. A new thread is a subagent, a compaction or a new chat.',
+  bg: 'sent by Claude Code itself, not by you',
+  newthread: 'new thread: this request does not continue any earlier request (a subagent, a compaction or a new chat)',
+  sys: 'the system instructions differ from the previous request in this thread',
+  tools: 'the tool list differs from the previous request in this thread',
+  suggestion: 'suggestion request: Claude Code asks the model what you might type next (the gray hint in the input box). You did not type it.',
+  auto: 'Auto: text Claude Code wrote itself, not you',
+  end_turn: 'the model finished its answer',
+  tool_use: 'the model stopped to ask for a tool',
+  max_tokens: 'the reply was cut because it reached the token limit',
+  stop_sequence: 'the model stopped at a stop sequence',
+};
+const tipFor = (stop) => TIP[stop] || ('stop reason: ' + stop);
+function badge(cls, text, tip) { return `<span class="badge ${cls}" title="${esc(tip)}">${esc(text)}</span>`; }
 function threadTag(ex) {
-  if (!ex.main) return `<span class="badge">bg</span>`;
+  const bg = badge('', 'bg', TIP.bg);
+  if (!ex.threaded) return bg;
   const multi = S.sessions.size > 1;
   const label = (multi ? (ex.sid || 'none').slice(0, 4) + '/' : '') + ex.thread;
   const c = `hsl(${hue(ex.sid + ex.thread)} 55% 45%)`;
-  return `<span class="tag" style="background:${c}" title="session ${esc(ex.sid || 'none')}, thread ${esc(ex.thread)}">${esc(label)}</span>`;
+  const tag = `<span class="tag" style="background:${c}" title="${esc(`${ex.thread}: ${TIP.thread} (session ${ex.sid || 'none'})`)}">${esc(label)}</span>`;
+  return ex.main ? tag : tag + bg;
 }
 function reqPreview(ex) {
-  if (!ex.main && !ex.msgs.length) return `<span class="k-muted">${esc(ex.req.method + ' ' + ex.req.path)}</span>`;
+  if (ex.suggestion) return `<span class="k-auto">suggestion request</span>`;
+  if (!ex.msgs.length) return `<span class="k-muted">${esc(ex.req.method + ' ' + ex.req.path)}</span>`;
   const user = [...ex.newMsgs].reverse().find(m => m.role === 'user');
   const items = [];
   if (user) for (const bl of blocks(user)) {
-    if (bl.type === 'text') { const p = splitReminders(bl.text).prompt; if (p) items.push(`<span class="k-you"><b>You:</b> “${esc(firstLine(p))}”</span>`); }
+    if (bl.type === 'text') {
+      const p = splitReminders(bl.text).prompt;
+      if (p) items.push(ex.main ? `<span class="k-you"><b>You:</b> “${esc(firstLine(p))}”</span>`   // U42: not typed by the user
+        : `<span class="k-auto" title="${esc(TIP.auto)}"><b>Auto:</b> “${esc(firstLine(p))}”</span>`);
+    }
     else if (bl.type === 'tool_result') {
       const c = S.calls.get(bl.tool_use_id);
       items.push(`<span class="${bl.is_error ? 'k-err' : 'k-res'}">↩ ${esc(c ? c.name : 'tool')} ${bl.is_error ? 'error' : 'result'} (${lineCount(resultText(bl))} lines)</span>`);
@@ -506,7 +584,7 @@ function reqPreview(ex) {
   }
   if (!items.length) items.push(`<span class="k-muted">${ex.newMsgs.length ? 'reminders only' : 'no new messages'}</span>`);
   const more = items.length > 3 ? `<span class="k-muted"> +${items.length - 3} more</span>` : '';
-  return (ex.main ? '' : `<span class="k-muted">${esc(ex.req.method + ' ' + ex.req.path)}</span><span class="sep">·</span>`) + items.slice(0, 3).join('<span class="sep">·</span>') + more;
+  return items.slice(0, 3).join('<span class="sep">·</span>') + more;
 }
 function replyPreview(ex) {
   const err = errorReason(ex);
@@ -530,25 +608,28 @@ function rowHead(ex) {
   const st = !ex.status ? `<span class="badge"><span class="spin"></span> in progress</span>`
     : `<span class="badge ${ex.status < 300 ? 'ok' : 'bad'}">${ex.status}</span>`;
   const marks = [];
-  if (ex.main) {
-    if (ex.newThread) marks.push('<span class="badge mk">new thread</span>');
-    else marks.push(`<span class="badge mk">+${ex.newMsgs.length} msgs</span>`);
-    if (ex.sysSame === false) marks.push('<span class="badge mk">system changed</span>');
-    if (ex.toolsSame === false) marks.push('<span class="badge mk">tools changed</span>');
+  if (ex.suggestion) marks.push(badge('sug', 'suggestion', TIP.suggestion));
+  if (ex.threaded) {
+    if (ex.newThread) marks.push(badge('mk', 'new thread', TIP.newthread));
+    else marks.push(badge('mk', `+${ex.newMsgs.length} msgs`, `${ex.newMsgs.length} message${ex.newMsgs.length === 1 ? '' : 's'} added since the previous request in this thread`));
+    if (ex.sysSame === false) marks.push(badge('mk', 'system changed', TIP.sys));
+    if (ex.toolsSame === false) marks.push(badge('mk', 'tools changed', TIP.tools));
   }
-  const stop = ex.reply.stop ? `<span class="badge ${ex.reply.stop === 'max_tokens' ? 'warn' : ex.reply.stop === 'tool_use' ? 'call' : ''}">${esc(ex.reply.stop)}</span>` : '';
+  const stop = ex.reply.stop ? badge(ex.reply.stop === 'max_tokens' ? 'warn' : ex.reply.stop === 'tool_use' ? 'call' : '', ex.reply.stop, tipFor(ex.reply.stop)) : '';
+  const thin = isThin(ex);
+  const where = !ex.main ? `<span class="mono k-muted">${esc(ex.req.method + ' ' + ex.req.path)}</span>` : '';
   const tok = (u.input_tokens != null || u.output_tokens != null)
     ? `<span title="input / output tokens; cache read ${u.cache_read_input_tokens || 0}, cache write ${u.cache_creation_input_tokens || 0}">in ${fmtTok((u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0))} / out ${fmtTok(u.output_tokens)}</span>` : '';
   const model = ex.model || ex.reply.model;
   return `<div class="meta">
-      <span>${fmtTime(ex.t0)}</span><span class="seq">#${ex.seq}</span>${threadTag(ex)}
+      <span>${fmtTime(ex.t0)}</span><span class="seq">#${ex.seq}</span>${threadTag(ex)}${where}
       ${model ? `<span>${esc(shortModel(model))}</span>` : ''}${st}${dur ? `<span>${dur}</span>` : ''}${tok}${stop}
       ${err ? `<span class="badge bad" title="${esc(err)}">${esc(firstLine(err, 40))}</span>` : ''}
       ${hasToolError(ex) ? '<span class="reddot" title="a tool result in this request is an error"></span>' : ''}
       ${marks.join('')}
-    </div>
-    <div class="pv"><span class="arrow">→</span>${reqPreview(ex)}</div>
-    ${ex.main || ex.status ? `<div class="pv"><span class="arrow">←</span>${replyPreview(ex)}</div>` : ''}`;
+    </div>${thin ? '' : `
+    <div class="pv"><span class="arrow" title="what is new in the request">→</span>${reqPreview(ex)}</div>
+    ${ex.threaded || ex.status ? `<div class="pv"><span class="arrow" title="the model's reply">←</span>${replyPreview(ex)}</div>` : ''}`}`;
 }
 
 // ---------- lazy <details> ----------
@@ -571,11 +652,27 @@ document.addEventListener('toggle', e => {
 
 // ---------- long text and JSON ----------
 const LIMIT_LINES = 15, LIMIT_CHARS = 3000;
-function longText(text, key, { mono = false, md = false, full = false } = {}) {
+// U30: a text block shows its first 80 characters with a chevron; opened, it is cut at 15 lines.
+// `flat` skips the 80-character step (for text already inside a collapsed container);
+// `full` skips both (system instructions are never cut).
+const PEEK = 80;
+const textState = new Map();     // text key -> true (opened) / false (closed by hand)
+function longText(text, key, { mono = false, md = false, full = false, flat = false } = {}) {
   text = String(text ?? '');
   const wrap = h('div');
+  const collapsible = !full && !flat && text.length > PEEK;
   const render = () => {
     wrap.innerHTML = '';
+    // A block with a search match opens on its own (U28).
+    const open = !collapsible || (textState.has(key) ? textState.get(key) : !!S.f.q && text.toLowerCase().includes(S.f.q));
+    if (collapsible) {
+      const peek = text.slice(0, PEEK).replace(/\s+/g, ' ').trimEnd() + '…';
+      const bar = h('div', { class: 'ctext', title: open ? 'Collapse' : 'Show the full text' },
+        h('span', { class: 'chev' }, open ? '▾' : '▸'), open ? null : h('span', { class: 'pre' + (mono ? ' mono' : '') }, peek));
+      bar.addEventListener('click', e => { e.stopPropagation(); textState.set(key, !open); render(); applyHighlight(wrap); });
+      wrap.append(bar);
+      if (!open) return;
+    }
     const lines = text.split('\n');
     const cut = !full && (lines.length > LIMIT_LINES || text.length > LIMIT_CHARS);
     const showAll = !cut || moreState.has(key);
@@ -661,15 +758,16 @@ function exLink(exId, toolId, to, text) {
 function renderBlock(bl, role, ex, key) {
   if (!bl) return null;
   switch (bl.type) {
-    case 'text': return role === 'user' ? userText(bl.text, key) : role === 'system' ? systemText(bl.text, key) : modelText(bl.text, key);
+    // U42: user-role text in a background request was written by Claude Code, not typed by the user.
+    case 'text': return role === 'user' ? userText(bl.text, key, !!ex && !ex.main) : role === 'system' ? systemText(bl.text, key) : modelText(bl.text, key);
     case 'tool_use': case 'server_tool_use': return callCard(bl, key, role === 'reply');
     case 'tool_addition': {
       const t = bl.tool || {}, name = (t.definition && t.definition.name) || t.name || '?';
-      return lazyDetails(key, 'blk rem', `<b>tool added</b> · <span class="mono">${esc(name)}</span>`, false, () => jsonView(bl, key + 'j', 3));
+      return lazyDetails(key, 'tadd', `+ tool: ${esc(name)}`, false, () => jsonView(bl, key + 'j', 3));
     }
     case 'tool_result': return resultCard(bl, key);
     case 'thinking': return lazyDetails(key, 'blk think', `thinking <span class="k-muted">(${(bl.thinking || '').length.toLocaleString()} chars)</span>`, false,
-      () => longText(bl.thinking || '(empty: the thinking text is not sent back)', key + 't'));
+      () => longText(bl.thinking || '(empty: the thinking text is not sent back)', key + 't', { flat: true }));
     case 'redacted_thinking': return h('div', { class: 'blk ph' }, 'redacted thinking');
     case 'image': case 'document': {
       const src = bl.source || {}, size = src.data ? Math.round(src.data.length * 3 / 4 / 1024) + ' KB' : '';
@@ -681,24 +779,27 @@ function renderBlock(bl, role, ex, key) {
     }
   }
 }
-function userText(text, key) {
+function userText(text, key, auto = false) {
   const { prompt, reminders } = splitReminders(text);
   const frag = document.createDocumentFragment();
+  const label = auto ? 'Auto' : 'You';
   if (prompt) {
-    const d = h('div', { class: 'blk you' }, h('div', { class: 'bh' }, h('span', { class: 'lbl' }, 'You')), longText(prompt, key + 'p'));
+    const d = h('div', { class: 'blk ' + (auto ? 'auto' : 'you') },
+      h('div', { class: 'bh' }, h('span', { class: 'lbl', title: auto ? TIP.auto : 'text you typed' }, label)), longText(prompt, key + 'p'));
     d.append(copyBtn(() => prompt)); frag.append(d);
   }
   reminders.forEach((r, i) => {
     const inner = r.replace(/<\/?system-reminder>/g, '').trim();
-    frag.append(lazyDetails(key + 'r' + i, 'blk rem', `<b>reminder</b> · ${esc(firstLine(inner, 120))}`, false, () => longText(inner, key + 'r' + i + 't', { mono: true })));
+    frag.append(lazyDetails(key + 'r' + i, 'blk rem', `<b>reminder</b> · ${esc(firstLine(inner, 120))}`, false, () => longText(inner, key + 'r' + i + 't', { mono: true, flat: true })));
   });
-  if (!prompt && !reminders.length) frag.append(h('div', { class: 'blk you' }, h('span', { class: 'lbl' }, 'You'), h('span', { class: 'none' }, '(empty)')));
+  if (!prompt && !reminders.length) frag.append(h('div', { class: 'blk ' + (auto ? 'auto' : 'you') }, h('span', { class: 'lbl' }, label), h('span', { class: 'none' }, '(empty)')));
   return frag;
 }
 // Claude Code also sends `role: "system"` messages in the middle of the conversation.
+// Never labeled You, Auto or Model.
 function systemText(text, key) {
-  return lazyDetails(key, 'blk rem', `<b>system message</b> · ${String(text).length.toLocaleString()} chars · ${esc(firstLine(text, 100))}`, false,
-    () => longText(text, key + 't', { mono: true }));
+  return lazyDetails(key, 'blk sysmsg', `<b>System message</b> · ${String(text).length.toLocaleString()} chars · ${esc(firstLine(text, 100))}`, false,
+    () => longText(text, key + 't', { mono: true, flat: true }));
 }
 function modelText(text, key) {
   const d = h('div', { class: 'blk model' }, h('div', { class: 'bh' }, h('span', { class: 'lbl' }, 'Model')), longText(text, key + 'm', { md: true }));
@@ -761,7 +862,7 @@ function secTitle(ex, name) {
     case 'conv': return `Conversation so far <span class="sub">${ex.newFrom} earlier message${ex.newFrom === 1 ? '' : 's'}</span>`;
     case 'sys': {
       const chars = sysText(b.system).reduce((n, t) => n + t.length, 0);
-      const ch = ex.sysSame == null ? (ex.main ? 'first request of this thread' : '') : ex.sysSame ? `unchanged since #${ex.sysSince}` : 'changed';
+      const ch = ex.sysSame == null ? (ex.threaded ? 'first request of this thread' : '') : ex.sysSame ? `unchanged since #${ex.sysSince}` : 'changed';
       return `System instructions <span class="sub">${chars.toLocaleString()} chars${ch ? ' · ' + ch : ''}</span>`;
     }
     case 'tools': {
@@ -778,8 +879,10 @@ const sysText = s => s == null ? [] : typeof s === 'string' ? [s] : Array.isArra
 function sectionsFor(ex) {
   const b = ex.body || {};
   const all = ['new', 'reply', 'conv', 'sys', 'tools', 'raw'];
-  if (ex.main) return all;
-  return all.filter(n => n === 'raw' || n === 'reply' || (n === 'new' && ex.msgs.length) || (n === 'sys' && b.system != null) || (n === 'tools' && (b.tools || []).length));
+  if (ex.threaded) return all;
+  // U45: empty sections are left out; Raw is always shown.
+  const hasReply = ex.reply.content.length || errorReason(ex) || !ex.ended;
+  return all.filter(n => n === 'raw' || (n === 'reply' && hasReply) || (n === 'new' && ex.msgs.length) || (n === 'sys' && b.system != null) || (n === 'tools' && (b.tools || []).length));
 }
 const DYNAMIC = new Set(['new', 'reply', 'raw', 'conv']);
 function buildSection(ex, name) {
@@ -800,7 +903,7 @@ function buildSection(ex, name) {
     const R = ex.reply;
     R.content.forEach((bl, i) => body.append(renderBlock(bl, bl && bl.type === 'text' ? 'assistant' : 'reply', ex, k + i)));
     if (!R.content.length && !err) body.append(h('div', { class: 'none' }, ex.ended ? (ex.raw ? '' : 'No message body.') : 'waiting for the reply…'));
-    if (!R.content.length && ex.raw && !ex.plain) body.append(longText(ex.raw, k + 'raw', { mono: true }));
+    if (!R.content.length && ex.raw && !ex.plain) body.append(longText(ex.raw, k + 'raw', { mono: true, flat: true }));
     if (R.unknown.length) body.append(lazyDetails(k + 'unk', 'blk ph', `unknown events (${R.unknown.length})`, false, () => jsonView(R.unknown, k + 'unkj', 1)));
     const u = R.usage || {};
     const foot = h('div', { class: 'foot' });
@@ -841,7 +944,7 @@ function buildSection(ex, name) {
         if (current === i) { current = null; panel.classList.add('hide'); return; }
         current = i; c.classList.add('on'); panel.classList.remove('hide'); panel.innerHTML = '';
         panel.append(h('div', null, h('b', { class: 'mono' }, t.name)));
-        if (t.description) panel.append(longText(t.description, k + 'd' + i));
+        if (t.description) panel.append(longText(t.description, k + 'd' + i, { flat: true }));
         panel.append(h('div', { class: 'role' }, 'input schema'), jsonView(t.input_schema || t, k + 's' + i, 3));
         const rest = Object.fromEntries(Object.entries(t).filter(([x]) => !['name', 'description', 'input_schema'].includes(x)));
         if (Object.keys(rest).length) panel.append(h('div', { class: 'role' }, 'other fields'), jsonView(rest, k + 'o' + i, 1));
@@ -855,7 +958,7 @@ function buildSection(ex, name) {
     const r = ex.req;
     body.append(h('div', { class: 'role' }, `request · ${r.method} ${r.path}`), kv(r.headers));
     if (ex.body) body.append(lazyDetails(k + 'body', 'json', '<span class="jc">request body</span>', false, () => jsonView(ex.body, k + 'bj', 1)));
-    else if (r.body_text) body.append(longText(r.body_text, k + 'bt', { mono: true }));
+    else if (r.body_text) body.append(longText(r.body_text, k + 'bt', { mono: true, flat: true }));
     if (ex.resp) body.append(h('div', { class: 'role' }, `reply · ${ex.resp.status} ${ex.resp.reason || ''}`), kv(ex.resp.headers));
     if (ex.isStream) {
       const list = h('div');
@@ -865,7 +968,7 @@ function buildSection(ex, name) {
       });
       body.append(lazyDetails(k + 'events', 'json', `<span class="jc">reply SSE events (${ex.events.length})</span>`, false, () => list));
     } else if (ex.plain) body.append(lazyDetails(k + 'plain', 'json', '<span class="jc">reply body</span>', true, () => jsonView(ex.plain, k + 'pj', 2)));
-    else if (ex.raw) body.append(longText(ex.raw, k + 'rawt', { mono: true }));
+    else if (ex.raw) body.append(longText(ex.raw, k + 'rawt', { mono: true, flat: true }));
     if (ex.errs.length) body.append(h('div', { class: 'errbox' }, h('div', { class: 'lbl' }, 'proxy errors'), h('div', { class: 'txt mono' }, ex.errs.join('\n'))));
     const cp = h('div', { class: 'foot' });
     const b1 = h('button', { class: 'btn' }, 'copy request JSON'); b1.addEventListener('click', () => copyText(JSON.stringify(ex.body ?? r.body_text ?? null, null, 2), null));
@@ -921,6 +1024,7 @@ function updateRow(ex) {
   const isNew = ensureRow(ex);
   ex.head.innerHTML = rowHead(ex);
   ex.row.classList.toggle('err', !!errorReason(ex));
+  ex.row.classList.toggle('thin', isThin(ex));
   ex.row.classList.toggle('hide', !visible(ex) && !ex.forced);
   if (ex.bodyEl) {
     for (const [name, d] of Object.entries(ex.secs)) {
@@ -977,7 +1081,7 @@ $('#newpill').addEventListener('click', () => { S.newCount = 0; window.scrollTo(
 let lastToolKey = '', lastModelKey = '';
 function renderHeader() {
   S.headerDirty = false;
-  let n = 0, bg = 0, tin = 0, tout = 0, tcr = 0, tcw = 0, nerr = 0, bgHidden = 0;
+  let n = 0, bg = 0, tin = 0, tout = 0, tcr = 0, tcw = 0, nerr = 0, nbgerr = 0, bgHidden = 0, userHidden = 0;
   const models = new Set();
   for (const ex of S.ex.values()) {
     n++; if (!ex.main) { bg++; if (S.f.hideBg) bgHidden++; }
@@ -985,13 +1089,16 @@ function renderHeader() {
     // "in" counts all input tokens, cached or not, the same way each row does.
     tin += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     tout += u.output_tokens || 0; tcr += u.cache_read_input_tokens || 0; tcw += u.cache_creation_input_tokens || 0;
-    if (errorReason(ex)) nerr++;
+    if (errorReason(ex)) { if (ex.main) nerr++; else nbgerr++; }   // U22
+    if (S.f.userOnly && !hasTypedPrompt(ex)) userHidden++;
     const m = ex.model || ex.reply.model; if (m) models.add(m);
   }
   $('#nreq').textContent = n; $('#nbg').textContent = bg;
   $('#tin').textContent = fmtTok(tin); $('#tout').textContent = fmtTok(tout);
   $('#tcr').textContent = fmtTok(tcr); $('#tcw').textContent = fmtTok(tcw);
   $('#nerr').textContent = nerr; $('#errbtn').classList.toggle('has', nerr > 0);
+  $('#nbgerr').textContent = nbgerr;
+  $('#userhidden').textContent = userHidden ? `${userHidden} hidden` : '';
   $('#bghidden').textContent = bgHidden ? `${bgHidden} background hidden` : '';
   const counts = new Map();
   for (const c of S.calls.values()) counts.set(c.name, (counts.get(c.name) || 0) + 1);
@@ -1032,6 +1139,8 @@ $('#fmodel').addEventListener('change', e => setFilter('model', e.target.value))
 $('#ferr').addEventListener('change', e => setFilter('errors', e.target.checked));
 $('#fbg').addEventListener('change', e => setFilter('hideBg', e.target.checked));
 $('#errbtn').addEventListener('click', () => setFilter('errors', !S.f.errors));
+$('#bgerrbtn').addEventListener('click', () => setFilter('errors', !S.f.errors));
+$('#fuser').addEventListener('change', e => setFilter('userOnly', e.target.checked));
 let qTimer = 0;
 $('#q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => setFilter('q', e.target.value.trim().toLowerCase()), 150); });
 
@@ -1075,6 +1184,7 @@ function markFocus() {
 }
 document.addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (e.key === 'Escape' && !$('#help').classList.contains('hide')) { toggleHelp(false); return; }
   if (e.key === '/' && !typing) { e.preventDefault(); $('#q').focus(); return; }
   if (e.key === 'Escape' && document.activeElement === $('#q')) { $('#q').value = ''; setFilter('q', ''); $('#q').blur(); return; }
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1086,6 +1196,33 @@ document.addEventListener('keydown', e => {
     rows[i].scrollIntoView({ block: 'nearest' });
   } else if (e.key === 'Enter' && S.focus) { toggleRow(S.focus); }
 });
+
+// ---------- legend panel (U41) ----------
+function buildHelp() {
+  const sw = (c, name, txt) => [h('dt', { html: `<span style="color:${c}">■</span> <b>${name}</b>` }), h('dd', null, txt)];
+  const bd = (label, txt) => [h('dt', { html: `<span class="badge">${esc(label)}</span>` }), h('dd', null, txt)];
+  const box = $('#help');
+  box.append(
+    h('h2', null, 'Colors'),
+    h('dl', null, ...sw('var(--you)', 'You', 'text you typed (blue, on the right)'),
+      ...sw('var(--rem)', 'Auto', TIP.auto + ' (gray)'),
+      ...sw('var(--model)', 'Model', 'text the model wrote (on the left)'),
+      ...sw('var(--call)', 'tool call', 'the model asked for a tool'),
+      ...sw('var(--res)', 'tool result', 'what the tool returned (red if it failed)')),
+    h('h2', null, 'Row lines'),
+    h('dl', null, h('dt', null, '→'), h('dd', null, 'what is new in the request (your prompt, an Auto prompt, or tool results)'),
+      h('dt', null, '←'), h('dd', null, 'the reply (model text or the tools it asked for)')),
+    h('h2', null, 'Badges'),
+    h('dl', null, ...bd('T1', TIP.thread), ...bd('+2 msgs', '2 messages added since the previous request in this thread'),
+      ...bd('new thread', TIP.newthread), ...bd('system changed', TIP.sys), ...bd('tools changed', TIP.tools),
+      ...bd('end_turn', TIP.end_turn), ...bd('tool_use', TIP.tool_use), ...bd('max_tokens', TIP.max_tokens),
+      ...bd('bg', TIP.bg), ...bd('suggestion', TIP.suggestion), ...bd('Auto', TIP.auto),
+      ...bd('cache r / w', 'input tokens read from / written to the prompt cache'),
+      ...bd('user traffic only', 'show only requests that carry a prompt you typed')));
+}
+buildHelp();
+function toggleHelp(force) { $('#help').classList.toggle('hide', force === undefined ? !$('#help').classList.contains('hide') : !force); }
+$('#helpbtn').addEventListener('click', e => { e.stopPropagation(); toggleHelp(); });
 
 // ---------- theme ----------
 const THEMES = ['auto', 'light', 'dark'];
