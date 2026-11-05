@@ -443,3 +443,6 @@ Run section 3's three commands. Then, in the Claude terminal:
     Then check the parsed result against acceptance checks A2–A6, A12, A14, A17,
   A19, A21, A22, A24, and A26, and
   report which checks pass and which you could not check.
+
+
+im going to add here that when i want it to say "Prompt" i dont want it to be the same color as when it says "You" but make it orange. and change the word "Prompt" to the word auto.

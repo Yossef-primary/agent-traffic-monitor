@@ -16,6 +16,7 @@
   --rem: #6b7280; --rem-bg: #f3f4f6;
   --jkey: #7c3aed; --jstr: #047857; --jnum: #b45309; --jlit: #2563eb;
   --mark: #fde68a;
+  --pend: #ea580c; --pend-bg: #fff1e6;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
@@ -29,6 +30,7 @@
     --err: #ff7b7b; --err-bg: #331617; --err-line: #6e2a2a;
     --warn: #e9c45a; --warn-bg: #2e2810; --rem: #9aa1ad; --rem-bg: #1c2029;
     --jkey: #c4a7ff; --jstr: #6fdc9f; --jnum: #f0b45a; --jlit: #7aa7ff; --mark: #6b5a12;
+    --pend: #fb923c; --pend-bg: #2d1c10;
     color-scheme: dark;
   }
 }
@@ -40,6 +42,7 @@
   --err: #ff7b7b; --err-bg: #331617; --err-line: #6e2a2a;
   --warn: #e9c45a; --warn-bg: #2e2810; --rem: #9aa1ad; --rem-bg: #1c2029;
   --jkey: #c4a7ff; --jstr: #6fdc9f; --jnum: #f0b45a; --jlit: #7aa7ff; --mark: #6b5a12;
+  --pend: #fb923c; --pend-bg: #2d1c10;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -166,6 +169,10 @@ details[open] > summary::before { transform: rotate(90deg); }
 .badge.sug { color: var(--rem); background: var(--rem-bg); border-style: dashed; }
 .badge.auto { color: var(--rem); background: var(--rem-bg); }
 .k-auto { color: var(--rem); }
+.k-pend { color: var(--pend); }
+.blk.pend { background: var(--pend-bg); border-color: color-mix(in srgb, var(--pend) 40%, transparent); align-self: flex-end; max-width: 85%; }
+.blk.pend .lbl { color: var(--pend); }
+.badge.pend { color: var(--pend); background: var(--pend-bg); border-color: color-mix(in srgb, var(--pend) 45%, transparent); }
 /* legend panel (U41) */
 #help { position: fixed; top: 54px; right: 16px; z-index: 30; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow: auto;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
@@ -588,7 +595,7 @@ const TIP = {
   newthread: 'new thread: this request does not continue any earlier request (a subagent, a compaction or a new chat)',
   sys: 'the system instructions differ from the previous request in this thread',
   tools: 'the tool list differs from the previous request in this thread',
-  prompt: 'not known yet whether you typed this; it turns into You or Auto when the next request arrives',
+  prompt: 'Auto (orange): not known yet whether you typed this; it turns into You or gray Auto when the next request arrives',
   side: 'side request: a one-off prompt Claude Code sent itself; the conversation went on without it',
   auto: 'Auto: text Claude Code wrote itself, not you',
   end_turn: 'the model finished its answer',
@@ -623,7 +630,7 @@ function reqPreview(ex) {
       const p = splitReminders(bl.text).prompt;
       if (p) { const w = who(ex, false);   // U42: never You for text Claude Code wrote
         items.push(w === 'you' ? `<span class="k-you"><b>You:</b> “${esc(firstLine(p))}”</span>`
-          : w === 'pending' ? `<span class="k-you" title="${esc(TIP.prompt)}"><b>Prompt:</b> “${esc(firstLine(p))}”</span>`
+          : w === 'pending' ? `<span class="k-pend" title="${esc(TIP.prompt)}"><b>Auto:</b> “${esc(firstLine(p))}”</span>`
           : `<span class="k-auto" title="${esc(TIP.auto)}"><b>Auto:</b> “${esc(firstLine(p))}”</span>`); }
     }
     else if (bl.type === 'tool_result') {
@@ -658,7 +665,7 @@ function rowHead(ex) {
     : `<span class="badge ${ex.status < 300 ? 'ok' : 'bad'}">${ex.status}</span>`;
   const marks = [];
   if (ex.autoKind) marks.push(badge('sug', ex.autoKind.label, ex.autoKind.tip));
-  if (ex.main && typedBasic(ex) && ex.pstate === 'pending') marks.push(badge('sug', 'Prompt', TIP.prompt));
+  if (ex.main && typedBasic(ex) && ex.pstate === 'pending') marks.push(badge('pend', 'Auto', TIP.prompt));
   if (ex.main && ex.pstate === 'auto') marks.push(badge('sug', 'side request', TIP.side));
   if (ex.threaded) {
     if (ex.newThread) marks.push(badge('mk', 'new thread', TIP.newthread));
@@ -834,9 +841,9 @@ function userText(text, key, w = 'you') {
   const { prompt, reminders } = splitReminders(text);
   const frag = document.createDocumentFragment();
   const auto = w === 'auto';
-  const label = auto ? 'Auto' : w === 'pending' ? 'Prompt' : 'You';
+  const label = auto || w === 'pending' ? 'Auto' : 'You';
   if (prompt) {
-    const d = h('div', { class: 'blk ' + (auto ? 'auto' : 'you') },
+    const d = h('div', { class: 'blk ' + (auto ? 'auto' : w === 'pending' ? 'pend' : 'you') },
       h('div', { class: 'bh' }, h('span', { class: 'lbl', title: auto ? TIP.auto : w === 'pending' ? TIP.prompt : 'text you typed' }, label)), longText(prompt, key + 'p'));
     d.append(copyBtn(() => prompt)); frag.append(d);
   }
@@ -844,7 +851,7 @@ function userText(text, key, w = 'you') {
     const inner = r.replace(/<\/?system-reminder>/g, '').trim();
     frag.append(lazyDetails(key + 'r' + i, 'blk rem', `<b>reminder</b> · ${esc(firstLine(inner, 120))}`, false, () => longText(inner, key + 'r' + i + 't', { mono: true, flat: true })));
   });
-  if (!prompt && !reminders.length) frag.append(h('div', { class: 'blk ' + (auto ? 'auto' : 'you') }, h('span', { class: 'lbl' }, label), h('span', { class: 'none' }, '(empty)')));
+  if (!prompt && !reminders.length) frag.append(h('div', { class: 'blk ' + (auto ? 'auto' : w === 'pending' ? 'pend' : 'you') }, h('span', { class: 'lbl' }, label), h('span', { class: 'none' }, '(empty)')));
   return frag;
 }
 // Claude Code also sends `role: "system"` messages in the middle of the conversation.
@@ -1258,6 +1265,7 @@ function buildHelp() {
     h('h2', null, 'Colors'),
     h('dl', null, ...sw('var(--you)', 'You', 'text you typed (blue, on the right)'),
       ...sw('var(--rem)', 'Auto', TIP.auto + ' (gray)'),
+      ...sw('var(--pend)', 'Auto (orange)', 'a prompt not yet known to be yours; it turns into You or gray Auto'),
       ...sw('var(--model)', 'Model', 'text the model wrote (on the left)'),
       ...sw('var(--call)', 'tool call', 'the model asked for a tool'),
       ...sw('var(--res)', 'tool result', 'what the tool returned (red if it failed)')),
@@ -1269,7 +1277,7 @@ function buildHelp() {
       ...bd('new thread', TIP.newthread), ...bd('system changed', TIP.sys), ...bd('tools changed', TIP.tools),
       ...bd('end_turn', TIP.end_turn), ...bd('tool_use', TIP.tool_use), ...bd('max_tokens', TIP.max_tokens),
       ...bd('bg', TIP.bg), ...AUTO_KINDS.flatMap(k => bd(k.label, k.tip)), ...bd('Auto', TIP.auto),
-      ...bd('Prompt', TIP.prompt), ...bd('side request', TIP.side),
+      h('dt', { html: '<span class="badge pend">Auto</span>' }), h('dd', null, TIP.prompt), ...bd('side request', TIP.side),
       ...bd('cache r / w', 'input tokens read from / written to the prompt cache'),
       ...bd('user traffic only', 'show only requests that carry a prompt you typed')));
 }

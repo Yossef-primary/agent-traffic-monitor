@@ -108,3 +108,11 @@ Choices where the spec was silent:
   still-pending `Prompt` row is hidden until it resolves.
 - The `?` legend lists the new badges. Replayed the real log (11 requests) in headless Chrome: no console
   errors; recap shows as a muted `recap` row, typed prompts end as You. A27 not checked on live idle recap.
+
+## Build 4: pending prompt is an orange "Auto"
+
+- The word **Prompt** is gone: a prompt not yet known to be typed now reads **Auto**, in orange (`--pend`),
+  in the row preview, the badge, and the block label, so it no longer looks like the blue **You**.
+  When it resolves it turns into blue **You** or gray **Auto** (side request).
+- The `?` legend has a new "Auto (orange)" entry. The note at the end of SPEC.md was a to-do for the spec
+  itself; only its behavior (orange, word Auto) was built.
